@@ -15,6 +15,7 @@ from reportlab.lib.units import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 import uuid
 import shutil
 from typing import List, Dict, Any
@@ -292,6 +293,25 @@ print(f"Temporary directory created: {temp_dir}")
 reports_dir = "reports"
 os.makedirs(reports_dir, exist_ok=True)
 
+# Pydantic model for manual input data
+class ManualInputData(BaseModel):
+    address: str
+    status: str
+    subdivision: str
+    yearBuilt: str
+    livingSqFt: str
+    totalSqFt: str
+    bedrooms: str
+    bathrooms: str
+    stories: str
+    garageSpaces: str
+    privatePool: str
+    listPrice: str
+    listPricePerSqFt: str
+    soldPrice: str
+    soldPricePerSqFt: str
+    daysOnMarket: str
+
 # API Endpoints
 @app.get("/")
 async def root():
@@ -510,6 +530,265 @@ async def generate_report(input_file: str = Query(..., description="Input file I
              ('BACKGROUND', (0, 1), (0, -1), colors.lightblue),
              ('ROWBACKGROUNDS', (1, 1), (-1, -1), [colors.beige, colors.white]),
          ]))
+        
+        # Define styles
+        title_style = ParagraphStyle(
+            name='Title',
+            parent=styles['Title'],
+            fontSize=24,
+            spaceAfter=30,
+            alignment=1
+        )
+        
+        heading_style = ParagraphStyle(
+            name='Heading1',
+            parent=styles['Heading1'],
+            fontSize=18,
+            spaceAfter=12,
+            spaceBefore=12
+        )
+        
+        # Build PDF story
+        story = [
+            Paragraph("Property Comparison Analysis", title_style),
+            Spacer(1, 20),
+            Paragraph("Property Features Comparison", heading_style),
+            property_table,
+            Spacer(1, 30),
+            Paragraph("Price & Market Analysis", heading_style),
+            price_table,
+            PageBreak(),
+            Paragraph("List Price vs Sold Price", heading_style),
+        ]
+        
+        # Add graphs
+        try:
+            price_chart_path = os.path.join(temp_dir, 'list_price_vs_sold_price.png')
+            sqft_chart_path = os.path.join(temp_dir, 'list_price_sqft_vs_sold_price_sqft.png')
+            
+            if os.path.exists(price_chart_path):
+                price_chart = Image(price_chart_path, width=7*inch, height=5*inch)
+                story.append(price_chart)
+                story.append(Spacer(1, 10))
+            
+            if os.path.exists(sqft_chart_path):
+                story.append(PageBreak())
+                story.append(Paragraph("List $/Sq Ft vs Sold $/Sq Ft", heading_style))
+                sqft_chart = Image(sqft_chart_path, width=7*inch, height=5*inch)
+                story.append(sqft_chart)
+        except Exception as e:
+            print(f"Error adding graphs to PDF: {e}")
+        
+        # Add appraisal report
+        story.append(PageBreak())
+        story.append(Paragraph("Appraisal Report", heading_style))
+        story.append(Paragraph("From a comparative market analysis viewpoint:", styles['Heading2']))
+        story.append(Spacer(1, 10))
+        
+        bullet_style = ParagraphStyle(
+            name='Bullet',
+            parent=styles['BodyText'],
+            fontName='Times-Roman',
+            fontSize=12,
+            leading=12,
+            spaceAfter=0,
+        )
+        for item in appraisal_report:
+            story.append(Paragraph(f"• {item}", bullet_style))
+            story.append(Spacer(1, 6))
+        
+        # Build the PDF
+        doc.build(story)
+        
+        # Generate unique report ID
+        report_id = f"report_{uuid.uuid4().hex[:8]}"
+        
+        # Move generated PDF to reports directory (final output)
+        report_path = os.path.join(reports_dir, f"{report_id}.pdf")
+        shutil.move(temp_pdf_path, report_path)
+        
+        # Clean up temporary files
+        cleanup_temp_files()
+        
+        # Convert DataFrames to dictionaries for JSON response
+        property_comparison = {}
+        for col in combined_df.columns:
+            property_comparison[col] = combined_df[col].to_dict()
+        
+        price_analysis = {}
+        for col in combined_df_price.columns:
+            price_analysis[col] = combined_df_price[col].to_dict()
+        
+        return {
+            "success": True,
+            "message": "Report generated successfully",
+            "report_data": {
+                "property_comparison": property_comparison,
+                "price_analysis": price_analysis,
+                "appraisal_report": appraisal_report
+            },
+            "report_id": report_id,
+            "report_url": f"/download-report/{report_id}",
+            "graphs_generated": [
+                "list_price_vs_sold_price.png",
+                "list_price_sqft_vs_sold_price_sqft.png"
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+@app.post("/generate-report-manual")
+async def generate_report_manual(manual_data: ManualInputData, comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
+    """Generate property comparison report with manual input data"""
+    try:
+        # Parse comparison file IDs
+        comparison_file_ids = [fid.strip() for fid in comparison_files.split(",")]
+        
+        # Validate comparison files exist
+        for file_id in comparison_file_ids:
+            if file_id not in uploaded_files or uploaded_files[file_id]["type"] != "comparison":
+                raise HTTPException(status_code=404, detail=f"Comparison file {file_id} not found")
+        
+        # Get comparison file paths
+        comparison_file_paths = [uploaded_files[fid]["file_path"] for fid in comparison_file_ids]
+        
+        # Convert manual data to the same format as extracted data
+        input_property_info = [{
+            'Address': manual_data.address,
+            'Status': manual_data.status,
+            'Subdivision': manual_data.subdivision,
+            'Year Built': manual_data.yearBuilt,
+            'Living Sq Ft': manual_data.livingSqFt,
+            'Total Sq Ft': manual_data.totalSqFt,
+            'Bedrooms': manual_data.bedrooms,
+            'Bathrooms (Full)': manual_data.bathrooms,
+            'Stories': manual_data.stories,
+            'Garage Spaces': manual_data.garageSpaces,
+            'Private Pool': manual_data.privatePool,
+        }]
+        
+        input_price_info = [{
+            'Address': manual_data.address,
+            'List Price': manual_data.listPrice,
+            'List $/Sq Ft (Living)': manual_data.listPricePerSqFt,
+            'Sold Price': manual_data.soldPrice,
+            'Sold $/Sq Ft (Living)': manual_data.soldPricePerSqFt,
+            'Days on Market': manual_data.daysOnMarket
+        }]
+        
+        # Process all comparison files
+        all_comparison_property_info = []
+        all_comparison_price_info = []
+        
+        for comp_file_path in comparison_file_paths:
+            comp_property_info, comp_price_info = extract_property_info(comp_file_path)
+            if comp_property_info and comp_price_info:
+                all_comparison_property_info.extend(comp_property_info)
+                all_comparison_price_info.extend(comp_price_info)
+        
+        # Combine all data
+        all_property_info = input_property_info + all_comparison_property_info if input_property_info and all_comparison_property_info else (input_property_info or all_comparison_property_info or [])
+        all_price_info = input_price_info + all_comparison_price_info if input_price_info and all_comparison_price_info else (input_price_info or all_comparison_price_info or [])
+        
+        # Generate graphs
+        combined_price_analysis = pd.DataFrame(all_price_info)
+        generate_graphs(combined_price_analysis)
+        
+        # Create DataFrames
+        combined_df = pd.DataFrame(all_property_info).set_index('Address').T if all_property_info else pd.DataFrame()
+        combined_df_price = pd.DataFrame(all_price_info).set_index('Address').T if all_price_info else pd.DataFrame()
+        
+        # Generate appraisal report
+        input_sq_ft = input_property_info[0]['Living Sq Ft'] if input_property_info else "0"
+        appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft)
+        
+        # Styles for PDF report
+        styles = getSampleStyleSheet()
+        # Generate PDF report in temporary directory
+        temp_pdf_path = os.path.join(temp_dir, "property_comparison.pdf")
+        doc = SimpleDocTemplate(temp_pdf_path, pagesize=letter, topMargin=30, bottomMargin=30, leftMargin=30, rightMargin=30)
+
+        # Generate styles for cells and table headers
+        cell_style = ParagraphStyle(
+            name='Cell',
+            parent=styles['BodyText'],
+            fontName='Times-Roman',
+            fontSize=10,
+            leading=12,
+            spaceAfter=0,
+            spaceBefore=0,
+            wordWrap='CJK',
+            alignment=1
+        )
+        cell_heading_style = ParagraphStyle(
+            name='CellHeading',
+            fontName='Times-Bold',
+            fontSize=12,
+            leading=12,
+        )
+        # Prepare data for PDF tables
+        property_data = [['Feature'] + list(combined_df.columns)]
+        for index, row in combined_df.iterrows():
+            property_data.append([index] + [str(cell) if pd.notna(cell) else '' for cell in row])
+        
+        price_data = [['Metric'] + list(combined_df_price.columns)]
+        for index, row in combined_df_price.iterrows():
+            price_data.append([index] + [str(cell) if pd.notna(cell) else '' for cell in row])
+        
+        # Wrap all cell content in Paragraph objects for word wrapping
+        for i, row in enumerate(property_data):
+            for j, cell in enumerate(row):
+                if i == 0:  # Header row
+                    property_data[i][j] = Paragraph(str(cell), cell_heading_style)
+                else:
+                    property_data[i][j] = Paragraph(str(cell), cell_style)
+        
+        for i, row in enumerate(price_data):
+            for j, cell in enumerate(row):
+                if i == 0:  # Header row
+                    price_data[i][j] = Paragraph(str(cell), cell_heading_style)
+                else:
+                    price_data[i][j] = Paragraph(str(cell), cell_style)
+        
+        # Create tables
+        property_table = Table(property_data, colWidths=[0.8*inch] + [1.3*inch] * (len(property_data[0]) - 1))
+        price_table = Table(price_data, colWidths=[0.8*inch] + [1.3*inch] * (len(price_data[0]) - 1))
+        
+        # Apply table styles
+        property_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Times-Roman'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+            ('FONTNAME', (0, 1), (0, -1), 'Times-Bold'),
+            ('FONTSIZE', (0, 1), (0, -1), 7),
+            ('BACKGROUND', (0, 1), (0, -1), colors.lightblue),
+            ('ROWBACKGROUNDS', (1, 1), (-1, -1), [colors.beige, colors.white]),
+        ]))
+        
+        price_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Times-Roman'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+            ('FONTNAME', (0, 1), (0, -1), 'Times-Bold'),
+            ('FONTSIZE', (0, 1), (0, -1), 7),
+            ('BACKGROUND', (0, 1), (0, -1), colors.lightblue),
+            ('ROWBACKGROUNDS', (1, 1), (-1, -1), [colors.beige, colors.white]),
+        ]))
         
         # Define styles
         title_style = ParagraphStyle(

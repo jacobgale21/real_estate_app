@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { apiService } from "./api";
-import type { GenerateReportResponse } from "./api";
+import type { GenerateReportResponse, ManualInputData } from "./api";
 
 interface UploadedFile {
   name: string;
@@ -20,6 +20,26 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [hasInputMLS, setHasInputMLS] = useState(true);
+  const [showInputForm, setShowInputForm] = useState(false);
+  const [manualInputData, setManualInputData] = useState({
+    address: "",
+    status: "Active",
+    subdivision: "",
+    yearBuilt: "",
+    livingSqFt: "",
+    totalSqFt: "",
+    bedrooms: "",
+    bathrooms: "",
+    stories: "",
+    garageSpaces: "",
+    privatePool: "No",
+    listPrice: "",
+    listPricePerSqFt: "",
+    soldPrice: "",
+    soldPricePerSqFt: "",
+    daysOnMarket: "",
+  });
 
   const handleMlsReportUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -104,10 +124,24 @@ function App() {
   };
 
   const handleGenerateReport = async () => {
-    if (!mlsReport || !mlsReport.file_id) {
-      setError("Please upload an MLS report first.");
-      return;
+    if (hasInputMLS) {
+      if (!mlsReport || !mlsReport.file_id) {
+        setError("Please upload an MLS report first.");
+        return;
+      }
+    } else {
+      if (
+        !manualInputData.address ||
+        !manualInputData.livingSqFt ||
+        !manualInputData.listPrice
+      ) {
+        setError(
+          "Please enter at least Address, Living Square Feet, and List Price."
+        );
+        return;
+      }
     }
+
     if (comparisonFiles.length === 0) {
       setError("Please upload at least one comparison property file.");
       return;
@@ -127,10 +161,19 @@ function App() {
     setSuccess(null);
 
     try {
-      const response = await apiService.generateReport(
-        mlsReport.file_id,
-        comparisonFileIds
-      );
+      let response;
+      if (hasInputMLS) {
+        response = await apiService.generateReport(
+          mlsReport!.file_id!,
+          comparisonFileIds
+        );
+      } else {
+        // Generate report with manual input data
+        response = await apiService.generateReportWithManualInput(
+          manualInputData as ManualInputData,
+          comparisonFileIds
+        );
+      }
 
       if (response.success) {
         setReportData(response);
@@ -187,6 +230,80 @@ function App() {
     setSuccess(null);
   };
 
+  const toggleInputMethod = () => {
+    setHasInputMLS(!hasInputMLS);
+    setMlsReport(null);
+    setManualInputData({
+      address: "",
+      status: "Active",
+      subdivision: "",
+      yearBuilt: "",
+      livingSqFt: "",
+      totalSqFt: "",
+      bedrooms: "",
+      bathrooms: "",
+      stories: "",
+      garageSpaces: "",
+      privatePool: "No",
+      listPrice: "",
+      listPricePerSqFt: "",
+      soldPrice: "",
+      soldPricePerSqFt: "",
+      daysOnMarket: "",
+    });
+    setShowInputForm(false);
+    setError(null);
+    setSuccess(null);
+  };
+
+  const handleManualInputChange = (field: string, value: string) => {
+    setManualInputData((prev) => {
+      const updatedData = {
+        ...prev,
+        [field]: value,
+      };
+
+      // Auto-calculate list price per sq ft when both living sq ft and list price are available
+      if (field === "livingSqFt" || field === "listPrice") {
+        const livingSqFt = field === "livingSqFt" ? value : prev.livingSqFt;
+        const listPrice = field === "listPrice" ? value : prev.listPrice;
+
+        if (livingSqFt && listPrice) {
+          // Remove commas and $ signs for calculation
+          const cleanSqFt = livingSqFt.replace(/[,$]/g, "");
+          const cleanPrice = listPrice.replace(/[,$]/g, "");
+
+          const sqFtNum = parseFloat(cleanSqFt);
+          const priceNum = parseFloat(cleanPrice);
+
+          if (!isNaN(sqFtNum) && !isNaN(priceNum) && sqFtNum > 0) {
+            const pricePerSqFt = priceNum / sqFtNum;
+            updatedData.listPricePerSqFt = `$${pricePerSqFt.toFixed(2)}`;
+          }
+        }
+      }
+
+      return updatedData;
+    });
+  };
+
+  const handleManualInputSubmit = () => {
+    // Validate required fields
+    if (
+      !manualInputData.address ||
+      !manualInputData.livingSqFt ||
+      !manualInputData.listPrice
+    ) {
+      setError(
+        "Please fill in at least Address, Living Square Feet, and List Price."
+      );
+      return;
+    }
+
+    setShowInputForm(false);
+    setSuccess("Manual input data saved successfully!");
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-blue-500 to-purple-600">
       <header className="bg-white/95 backdrop-blur-md py-8 text-center shadow-lg w-full">
@@ -228,57 +345,479 @@ function App() {
           )}
 
           <div className="bg-white rounded-3xl p-8 shadow-xl">
-            {/* MLS Report Upload */}
-            <div className="mb-8 p-6 border-2 border-dashed border-gray-200 rounded-2xl transition-all duration-300 hover:border-blue-500 hover:bg-blue-50">
-              <h2 className="text-2xl font-semibold text-gray-800 mb-2">
-                Step 1: Upload MLS Report
+            {/* Input Method Selection */}
+            <div className="mb-8 p-6 border-2 border-gray-200 rounded-2xl bg-gray-50">
+              <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+                Step 1: Choose Input Method
               </h2>
-              <p className="text-gray-600 mb-6">
-                Upload the main property MLS report you want to analyze
-              </p>
-
-              <div className="relative">
-                <input
-                  type="file"
-                  id="mls-report"
-                  accept=".pdf"
-                  onChange={handleMlsReportUpload}
-                  disabled={isUploading}
-                  className="absolute opacity-0 w-full h-full cursor-pointer"
-                />
-                <label
-                  htmlFor="mls-report"
-                  className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-blue-500 rounded-xl bg-blue-50 cursor-pointer transition-all duration-300 hover:bg-blue-100 min-h-[150px]"
+              <div className="flex flex-col sm:flex-row gap-4">
+                <button
+                  onClick={toggleInputMethod}
+                  className={`flex-1 p-4 rounded-xl border-2 transition-all duration-300 ${
+                    hasInputMLS
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-gray-300 bg-white text-gray-700 hover:border-blue-300"
+                  }`}
                 >
-                  <div className="text-5xl mb-4">📄</div>
-                  <span className="text-lg font-medium text-gray-800 mb-2">
-                    {isUploading ? "Uploading..." : "Choose MLS Report PDF"}
-                  </span>
-                  <span className="text-sm text-gray-500">
-                    {isUploading ? "Please wait..." : "or drag and drop here"}
-                  </span>
-                </label>
+                  <div className="text-2xl mb-2">📄</div>
+                  <div className="font-semibold">I have an MLS Report</div>
+                  <div className="text-sm opacity-75">Upload a PDF file</div>
+                </button>
+                <button
+                  onClick={toggleInputMethod}
+                  className={`flex-1 p-4 rounded-xl border-2 transition-all duration-300 ${
+                    !hasInputMLS
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-gray-300 bg-white text-gray-700 hover:border-blue-300"
+                  }`}
+                >
+                  <div className="text-2xl mb-2">✏️</div>
+                  <div className="font-semibold">Manual Input</div>
+                  <div className="text-sm opacity-75">Enter data manually</div>
+                </button>
               </div>
+            </div>
 
-              {mlsReport && (
-                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg mt-4 border border-gray-200">
-                  <div className="flex flex-col gap-1">
-                    <span className="font-medium text-gray-800">
-                      📋 {mlsReport.name}
+            {/* MLS Report Upload */}
+            {hasInputMLS && (
+              <div className="mb-8 p-6 border-2 border-dashed border-gray-200 rounded-2xl transition-all duration-300 hover:border-blue-500 hover:bg-blue-50">
+                <h2 className="text-2xl font-semibold text-gray-800 mb-2">
+                  Upload MLS Report
+                </h2>
+                <p className="text-gray-600 mb-6">
+                  Upload the main property MLS report you want to analyze
+                </p>
+
+                <div className="relative">
+                  <input
+                    type="file"
+                    id="mls-report"
+                    accept=".pdf"
+                    onChange={handleMlsReportUpload}
+                    disabled={isUploading}
+                    className="absolute opacity-0 w-full h-full cursor-pointer"
+                  />
+                  <label
+                    htmlFor="mls-report"
+                    className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-blue-500 rounded-xl bg-blue-50 cursor-pointer transition-all duration-300 hover:bg-blue-100 min-h-[150px]"
+                  >
+                    <div className="text-5xl mb-4">📄</div>
+                    <span className="text-lg font-medium text-gray-800 mb-2">
+                      {isUploading ? "Uploading..." : "Choose MLS Report PDF"}
                     </span>
                     <span className="text-sm text-gray-500">
-                      {formatFileSize(mlsReport.size)}
+                      {isUploading ? "Please wait..." : "or drag and drop here"}
                     </span>
-                  </div>
-                  <button
-                    className="bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg transition-colors duration-300 hover:bg-red-600"
-                    onClick={() => setMlsReport(null)}
-                  >
-                    ✕
-                  </button>
+                  </label>
                 </div>
-              )}
-            </div>
+
+                {mlsReport && (
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg mt-4 border border-gray-200">
+                    <div className="flex flex-col gap-1">
+                      <span className="font-medium text-gray-800">
+                        📋 {mlsReport.name}
+                      </span>
+                      <span className="text-sm text-gray-500">
+                        {formatFileSize(mlsReport.size)}
+                      </span>
+                    </div>
+                    <button
+                      className="bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg transition-colors duration-300 hover:bg-red-600"
+                      onClick={() => setMlsReport(null)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Manual Input Form */}
+            {!hasInputMLS && (
+              <div className="mb-8 p-6 border-2 border-gray-200 rounded-2xl bg-blue-50">
+                <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+                  Manual Property Data Input
+                </h2>
+                <p className="text-gray-600 mb-6">
+                  Enter the property information manually. At minimum, please
+                  provide Address, Living Square Feet, and List Price.
+                </p>
+
+                {!showInputForm ? (
+                  <button
+                    onClick={() => setShowInputForm(true)}
+                    className="inline-flex items-center gap-2 px-6 py-3 text-lg font-semibold rounded-full transition-all duration-300 shadow-lg bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:shadow-xl hover:-translate-y-0.5"
+                  >
+                    ✏️ Enter Property Data
+                  </button>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Basic Information */}
+                      <div className="space-y-4">
+                        <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">
+                          Basic Information
+                        </h3>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Address *
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.address}
+                            onChange={(e) =>
+                              handleManualInputChange("address", e.target.value)
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="123 Main St"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Status
+                          </label>
+                          <select
+                            value={manualInputData.status}
+                            onChange={(e) =>
+                              handleManualInputChange("status", e.target.value)
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          >
+                            <option value="Active">Active</option>
+                            <option value="Closed">Closed</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Subdivision
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.subdivision}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "subdivision",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="Windsor Park"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Year Built
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.yearBuilt}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "yearBuilt",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="2015"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Property Details */}
+                      <div className="space-y-4">
+                        <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">
+                          Property Details
+                        </h3>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Living Square Feet *
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.livingSqFt}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "livingSqFt",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="2,500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Total Square Feet
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.totalSqFt}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "totalSqFt",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="3,200"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Bedrooms
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.bedrooms}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "bedrooms",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="4"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Bathrooms
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.bathrooms}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "bathrooms",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="3"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Additional Details */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-4">
+                        <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">
+                          Additional Features
+                        </h3>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Stories
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.stories}
+                            onChange={(e) =>
+                              handleManualInputChange("stories", e.target.value)
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="2"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Garage Spaces
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.garageSpaces}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "garageSpaces",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="2"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Private Pool
+                          </label>
+                          <select
+                            value={manualInputData.privatePool}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "privatePool",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          >
+                            <option value="Yes">Yes</option>
+                            <option value="No">No</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Pricing Information */}
+                      <div className="space-y-4">
+                        <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">
+                          Pricing Information
+                        </h3>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            List Price *
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.listPrice}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "listPrice",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="$450,000"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            List Price per Sq Ft
+                            {manualInputData.listPricePerSqFt &&
+                              manualInputData.livingSqFt &&
+                              manualInputData.listPrice && (
+                                <span className="text-xs text-green-600 ml-2">
+                                  (Auto-calculated)
+                                </span>
+                              )}
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.listPricePerSqFt}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "listPricePerSqFt",
+                                e.target.value
+                              )
+                            }
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                              manualInputData.listPricePerSqFt &&
+                              manualInputData.livingSqFt &&
+                              manualInputData.listPrice
+                                ? "bg-green-50 border-green-300"
+                                : ""
+                            }`}
+                            placeholder="$180"
+                            readOnly={
+                              !!(
+                                manualInputData.listPricePerSqFt &&
+                                manualInputData.livingSqFt &&
+                                manualInputData.listPrice
+                              )
+                            }
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Sold Price
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.soldPrice}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "soldPrice",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="$440,000"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Sold Price per Sq Ft
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.soldPricePerSqFt}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "soldPricePerSqFt",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="$176"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Days on Market
+                          </label>
+                          <input
+                            type="text"
+                            value={manualInputData.daysOnMarket}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "daysOnMarket",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="45"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Form Actions */}
+                    <div className="flex gap-4 pt-4 border-t">
+                      <button
+                        onClick={handleManualInputSubmit}
+                        className="inline-flex items-center gap-2 px-6 py-3 text-lg font-semibold rounded-full transition-all duration-300 shadow-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:shadow-xl hover:-translate-y-0.5"
+                      >
+                        ✅ Save Property Data
+                      </button>
+                      <button
+                        onClick={() => setShowInputForm(false)}
+                        className="inline-flex items-center gap-2 px-6 py-3 text-lg font-semibold rounded-full transition-all duration-300 shadow-lg bg-gray-500 text-white hover:shadow-xl hover:-translate-y-0.5"
+                      >
+                        ❌ Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Display saved data */}
+                {!showInputForm && manualInputData.address && (
+                  <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <h4 className="font-semibold text-green-800 mb-2">
+                      ✅ Property Data Saved
+                    </h4>
+                    <p className="text-green-700 text-sm">
+                      Address: {manualInputData.address} | Living Sq Ft:{" "}
+                      {manualInputData.livingSqFt} | List Price:{" "}
+                      {manualInputData.listPrice}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Comparison Properties Upload */}
             <div className="mb-8 p-6 border-2 border-dashed border-gray-200 rounded-2xl transition-all duration-300 hover:border-blue-500 hover:bg-blue-50">
@@ -349,13 +888,19 @@ function App() {
             <div className="text-center py-8">
               <button
                 className={`inline-flex items-center gap-2 px-8 py-4 text-lg font-semibold rounded-full transition-all duration-300 shadow-lg ${
-                  !mlsReport || comparisonFiles.length === 0 || isGenerating
+                  (hasInputMLS && !mlsReport) ||
+                  (!hasInputMLS && !manualInputData.address) ||
+                  comparisonFiles.length === 0 ||
+                  isGenerating
                     ? "bg-gray-400 cursor-not-allowed"
                     : "bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:shadow-xl hover:-translate-y-0.5"
                 }`}
                 onClick={handleGenerateReport}
                 disabled={
-                  !mlsReport || comparisonFiles.length === 0 || isGenerating
+                  (hasInputMLS && !mlsReport) ||
+                  (!hasInputMLS && !manualInputData.address) ||
+                  comparisonFiles.length === 0 ||
+                  isGenerating
                 }
               >
                 {isGenerating ? (
@@ -368,10 +913,13 @@ function App() {
                 )}
               </button>
 
-              {(!mlsReport || comparisonFiles.length === 0) && (
+              {((hasInputMLS && !mlsReport) ||
+                (!hasInputMLS && !manualInputData.address) ||
+                comparisonFiles.length === 0) && (
                 <p className="text-red-500 text-sm font-medium mt-4">
-                  Please upload both an MLS report and at least one comparison
-                  property to generate the analysis.
+                  {hasInputMLS
+                    ? "Please upload both an MLS report and at least one comparison property to generate the analysis."
+                    : "Please enter property data and upload at least one comparison property to generate the analysis."}
                 </p>
               )}
 

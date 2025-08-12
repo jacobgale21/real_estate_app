@@ -21,6 +21,25 @@ export interface ReportData {
   appraisal_report: string[];
 }
 
+export interface ManualInputData {
+  address: string;
+  status: string;
+  subdivision: string;
+  yearBuilt: string;
+  livingSqFt: string;
+  totalSqFt: string;
+  bedrooms: string;
+  bathrooms: string;
+  stories: string;
+  garageSpaces: string;
+  privatePool: string;
+  listPrice: string;
+  listPricePerSqFt: string;
+  soldPrice: string;
+  soldPricePerSqFt: string;
+  daysOnMarket: string;
+}
+
 export interface GenerateReportResponse {
   success: boolean;
   message: string;
@@ -75,7 +94,7 @@ class ApiService {
     return response.json();
   }
 
-  // Generate report
+  // Generate report with file input
   async generateReport(
     inputFileId: string,
     comparisonFileIds: string[]
@@ -85,6 +104,30 @@ class ApiService {
 
     const response = await fetch(url, {
       method: "GET",
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Report generation failed");
+    }
+
+    return response.json();
+  }
+
+  // Generate report with manual input
+  async generateReportWithManualInput(
+    manualData: ManualInputData,
+    comparisonFileIds: string[]
+  ): Promise<GenerateReportResponse> {
+    const comparisonFilesParam = comparisonFileIds.join(",");
+    const url = `${this.baseUrl}/generate-report-manual?comparison_files=${comparisonFilesParam}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(manualData),
     });
 
     if (!response.ok) {
