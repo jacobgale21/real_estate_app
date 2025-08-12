@@ -1,0 +1,698 @@
+
+import pandas as pd
+import PyPDF2
+import os
+import re
+import tempfile
+from pathlib import Path
+# Write DataFrames to PDF in minimal lines
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, ListFlowable, ListItem
+import matplotlib.pyplot as plt
+from reportlab.platypus import Image, PageBreak
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi.responses import FileResponse
+import uuid
+import shutil
+from typing import List, Dict, Any
+import json
+import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
+
+
+def extract_property_info(file_path):
+    """
+    Extract property information from PDF text.
+    Each MLS report contains the same phrases for basic property information, so use regex statements to extract basic information.
+
+    Args:
+        text (str): Extracted text from PDF
+        
+    Returns:
+        dict: Dictionary containing extracted property information
+    """
+
+    try:
+        with open(file_path, 'rb') as file:
+            # Create PDF reader object
+            pdf_reader = PyPDF2.PdfReader(file)
+
+            property_result = []
+            price_result = []
+            # Loop through each page of the PDF
+            for page_num, page in enumerate(pdf_reader.pages):
+                # Only process even pages (MLS report)
+                if page_num % 2 == 0:
+                    # Extract text from the page
+                    text = page.extract_text()
+                    # Initialize dictionaries to store property and price information
+                    property_info = {
+                        'Address': None,
+                        'Status': None,
+                        'Subdivision': None,
+                        'Year Built': None,
+                        'Living Sq Ft': None,
+                        'Total Sq Ft': None,
+                        'Bedrooms': None,
+                        'Bathrooms (Full)': None,
+                        'Stories': None,
+                        'Garage Spaces': None,
+                        'Private Pool': None,
+                    }
+
+                    price_info = {
+                        'Address': None,
+                        'List Price': None,
+                        'List $/Sq Ft (Living)': None,
+                        'Sold Price': None,
+                        'Sold $/Sq Ft (Living)': None,
+                        'Days on Market': None
+                    }
+                    
+                    # Convert text to lowercase for easier matching
+                    text_lower = text.lower()
+                    lines = text.split('\n')
+                    
+                    # Extract address (look for patterns like "1310 Lamarville Dr" or "1163 N Prescott Dr")
+                    address_patterns = [
+                        r'\d+\s+[A-Za-z\s]+(?:Dr|Ave|St|Blvd|Ln|Way|Ct|Pl)',
+                        r'\d+\s+[A-Za-z\s]+(?:Drive|Avenue|Street|Boulevard|Lane|Way|Court|Place)'
+                    ]
+                    # Iterate through each line of the text and extract the property and price information through regex statements
+                    for line in lines:
+                        for pattern in address_patterns:
+                            address_match = re.search(pattern, line, re.IGNORECASE)
+                            if address_match and not property_info['Address']:
+                                property_info['Address'] = address_match.group().strip()
+                                price_info['Address'] = address_match.group().strip()   
+                        if 'subdivision:' in line.lower():
+                            subdivision_match = re.search(r'subdivision:\s*(.+)', line, re.IGNORECASE)
+                            if subdivision_match:
+                                property_info['Subdivision'] = subdivision_match.group(1).strip()
+                        elif 'livsqft' in line.lower():
+                            living_sq_ft_match = re.search(r'livsqft:\s*(.+)', line, re.IGNORECASE)
+                            if living_sq_ft_match:
+                                property_info['Living Sq Ft'] = living_sq_ft_match.group(1).strip()
+                        elif 'sqft - total' in line.lower():
+                            total_sq_ft_match = re.search(r'sqft - total:\s*(.+)', line, re.IGNORECASE)
+                            if total_sq_ft_match:
+                                property_info['Total Sq Ft'] = total_sq_ft_match.group(1).strip()
+                        elif 'yr built' in line.lower():
+                            year_built_match = re.search(r'yr built:\s*(.+)', line, re.IGNORECASE)
+                            if year_built_match:
+                                property_info['Year Built'] = year_built_match.group(1).strip()
+                        elif 'baths - total' in line.lower():
+                            baths_total_match = re.search(r'baths - total:\s*(.+)', line, re.IGNORECASE)
+                            if baths_total_match:
+                                property_info['Bathrooms (Full)'] = baths_total_match.group(1).strip()
+                        elif 'total bedrooms' in line.lower():
+                            total_bedrooms_match = re.search(r'total bedrooms:\s*(.+)', line, re.IGNORECASE)
+                            if total_bedrooms_match:
+                                property_info['Bedrooms'] = total_bedrooms_match.group(1).strip()
+                        elif 'private pool' in line.lower():
+                            private_pool_match = re.search(r'private pool:\s*(.+)', line, re.IGNORECASE)
+                            if private_pool_match:
+                                property_info['Private Pool'] = private_pool_match.group(1).strip()
+                        elif 'stories' in line.lower():
+                            stories_match = re.search(r'stories:\s*(.+)', line, re.IGNORECASE)
+                            if stories_match:
+                                property_info['Stories'] = stories_match.group(1).strip()
+                        elif 'spaces' in line.lower():
+                            garage_match = re.search(r'spaces:\s*(.+)', line, re.IGNORECASE)
+                            if garage_match:
+                                property_info['Garage Spaces'] = garage_match.group(1).strip()
+                        elif 'orig lp' in line.lower():
+                            # Extract list price between "orig lp:" and "list price/sqft:"
+                            orig_lp_match = re.search(r"lp:\s+(.*?)\s+list price", line, re.IGNORECASE)
+                            orig_sqft_match = re.search(r'list price/sqft:\s*(.+)', line, re.IGNORECASE)
+                            if orig_lp_match:
+                                price_info['List Price'] = orig_lp_match.group(1).strip()
+                            if orig_sqft_match:
+                                price_info['List $/Sq Ft (Living)'] = orig_sqft_match.group(1).strip()
+                        elif 'sold price' in line.lower():
+                            sold_price_match = re.search(r"sold price:\s+(.*?)\s+sold price sqft", line, re.IGNORECASE)
+                            if sold_price_match:
+                                price_info['Sold Price'] = sold_price_match.group(1).strip()
+                            sold_price_sqft_match = re.search(r'sold price sqft:\s*(.+)', line, re.IGNORECASE)
+                            if sold_price_sqft_match:
+                                price_info['Sold $/Sq Ft (Living)'] = sold_price_sqft_match.group(1).strip()
+                        elif 'days on market' in line.lower():
+                            days_on_market_match = re.search(r'days on market:\s*(.+)', line, re.IGNORECASE)
+                            if days_on_market_match:
+                                price_info['Days on Market'] = days_on_market_match.group(1).strip()
+                        elif 'st:' in line.lower():
+                            status_match = re.search(r'st:\s+(.*?)\s+type:', line, re.IGNORECASE)
+                            if status_match:
+                                property_info['Status'] = status_match.group(1).strip()
+
+                    property_result.append(property_info)
+                    price_result.append(price_info)
+            return property_result, price_result
+    except Exception as e:
+        print(f"Error reading PDF file {file_path}: {e}")
+        return None
+        
+def generate_graphs(combined_df_price):
+    # Clean data by removing None values and converting to numeric
+    df_clean = combined_df_price.copy()
+
+    # Convert price columns to numeric, removing $ and commas
+    for col in ['List Price', 'Sold Price']:
+        df_clean[col] = pd.to_numeric(df_clean[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+
+    for col in ['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)']:
+        df_clean[col] = pd.to_numeric(df_clean[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+
+    # Remove rows where both values are None/NaN
+    df_clean = df_clean.dropna(subset=['List Price', 'Sold Price'], how='all')
+
+    # List Price vs Sold Price Bar Chart
+    price_fig = plt.figure(figsize=(12, 8))
+
+    # Filter for properties with both list and sold prices
+    valid_data = df_clean.dropna(subset=['List Price', 'Sold Price'], how='all')
+
+    if not valid_data.empty:
+        addresses = valid_data['Address'].tolist()
+        list_prices = valid_data['List Price'].tolist()
+        sold_prices = valid_data['Sold Price'].tolist()
+        
+        x = range(len(addresses))
+        width = 0.35
+    
+        plt.bar([i - width/2 for i in x], list_prices, width, label='List Price', color='skyblue', alpha=0.8)
+        plt.bar([i + width/2 for i in x], sold_prices, width, label='Sold Price', color='lightcoral', alpha=0.8)         
+        plt.xlabel('Properties')
+        plt.ylabel('Price ($ MM)')
+        plt.title('List Price vs Sold Price Comparison')
+        plt.xticks(x, [addr.split()[0] + ' ' + addr.split()[1] if len(addr.split()) > 1 else addr for addr in addresses], rotation=45, ha='right')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(temp_dir, 'list_price_vs_sold_price.png'), dpi=300, bbox_inches='tight')
+        
+
+    # List $/Sq Ft vs Sold $/Sq Ft Bar Chart
+    plt.figure(figsize=(12, 8))
+
+    # Filter for properties with both list and sold price per sq ft
+    valid_sqft_data = df_clean.dropna(subset=['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)'], how='all')
+
+    if not valid_sqft_data.empty:
+        addresses_sqft = valid_sqft_data['Address'].tolist()
+        list_sqft = valid_sqft_data['List $/Sq Ft (Living)'].tolist()
+        sold_sqft = valid_sqft_data['Sold $/Sq Ft (Living)'].tolist()
+        
+        x_sqft = range(len(addresses_sqft))
+        width = 0.35
+        
+        plt.bar([i - width/2 for i in x_sqft], list_sqft, width, label='List $/Sq Ft', color='lightgreen', alpha=0.8)
+        plt.bar([i + width/2 for i in x_sqft], sold_sqft, width, label='Sold $/Sq Ft', color='orange', alpha=0.8)
+        plt.xlabel('Properties')
+        plt.ylabel('Price per Sq Ft ($)')
+        plt.title('List \$/ Sq Ft vs Sold \$/ Sq Ft Comparison')
+        plt.xticks(x_sqft, [addr.split()[0] + ' ' + addr.split()[1] if len(addr.split()) > 1 else addr for addr in addresses_sqft], rotation=45, ha='right')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(temp_dir, 'list_price_sqft_vs_sold_price_sqft.png'), dpi=300, bbox_inches='tight')
+
+
+def cleanup_temp_files():
+    """Clean up all temporary files except the final report"""
+    try:
+        # Clean up uploaded PDFs
+        for file_info in uploaded_files.values():
+            if os.path.exists(file_info["file_path"]):
+                os.remove(file_info["file_path"])
+        
+        # Clean up generated graphs
+        graph_files = [
+            os.path.join(temp_dir, 'list_price_vs_sold_price.png'),
+            os.path.join(temp_dir, 'list_price_sqft_vs_sold_price_sqft.png')
+        ]
+        for graph_file in graph_files:
+            if os.path.exists(graph_file):
+                os.remove(graph_file)
+        
+        # Clear uploaded files dictionary
+        uploaded_files.clear()
+        
+        print("Temporary files cleaned up successfully")
+    except Exception as e:
+        print(f"Error cleaning up temporary files: {e}")
+
+def generate_appraisal_report(input_price_info, comparison_price_info, input_sq_ft):
+    # Compare the average of the other properties to the target property
+    # Calculate the average of the other properties
+    # List containing inputs
+    result = []
+    input_price_info = pd.DataFrame(input_price_info)
+    comparison_price_info = pd.DataFrame(comparison_price_info)
+
+    # Remove commas from input_sq_ft and convert to integer
+    input_sq_ft = int(input_sq_ft.replace(',', ''))
+
+    # Convert price columns to numeric, removing $ and commas
+    for col in ['List Price', 'Sold Price']:
+        input_price_info[col] = pd.to_numeric(input_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+        comparison_price_info[col] = pd.to_numeric(comparison_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+
+    for col in ['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)']:
+        input_price_info[col] = pd.to_numeric(input_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+        comparison_price_info[col] = pd.to_numeric(comparison_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+    # Calculate the average of the other properties and estimated value of the input property
+    comparison_mean = comparison_price_info['Sold $/Sq Ft (Living)'].mean()
+    estimated_value = input_sq_ft * comparison_mean
+    result.append(f"Using the {len(comparison_price_info)} comparable properties, the average sold $/sq ft = ${comparison_mean:.2f}.")
+    result.append(f"Applying this to {input_price_info['Address'].iloc[0]}'s {input_sq_ft} sq ft yields an estimated value of ~ ${estimated_value:.2f}.")
+    result.append(f"{input_price_info['Address'].iloc[0]} ask of ${input_price_info['List Price'].iloc[0]:,.0f} is {input_price_info['List Price'].iloc[0]/estimated_value:.2f} times the estimated value.")
+    return result
+
+# Create FastAPI app instance
+app = FastAPI()
+
+app.add_middleware(
+CORSMiddleware,
+allow_origins=["*"],
+allow_credentials=True,
+allow_methods=["*"],
+allow_headers=["*"],
+)
+
+# Global storage for uploaded files (in production, use a database)
+uploaded_files = {}
+
+# Create temporary directory for processing
+temp_dir = tempfile.mkdtemp(prefix="real_estate_")
+print(f"Temporary directory created: {temp_dir}")
+
+# Create reports directory for final outputs only
+reports_dir = "reports"
+os.makedirs(reports_dir, exist_ok=True)
+
+# API Endpoints
+@app.get("/")
+async def root():
+    """Root endpoint for testing"""
+    return {"message": "Real Estate PDF Analysis API is running!"}
+
+@app.post("/upload-input-pdf")
+async def upload_input_pdf(file: UploadFile = File(...)):
+    """Upload the main MLS report PDF"""
+    try:
+        # Validate file type
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+        
+        # Generate unique file ID
+        file_id = f"input_{uuid.uuid4().hex[:8]}"
+        
+        # Save file to temporary directory
+        file_path = os.path.join(temp_dir, f"{file_id}.pdf")
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Store file info
+        uploaded_files[file_id] = {
+            "filename": file.filename,
+            "file_path": file_path,
+            "file_size": os.path.getsize(file_path),
+            "type": "input"
+        }
+        
+        return {
+            "success": True,
+            "message": "Input PDF uploaded successfully",
+            "file_id": file_id,
+            "filename": file.filename,
+            "file_size": uploaded_files[file_id]["file_size"]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.post("/upload-comparison-pdf")
+async def upload_comparison_pdf(files: List[UploadFile] = File(...)):
+    """Upload comparison property PDFs"""
+    try:
+        uploaded_file_info = []
+        
+        for file in files:
+            # Validate file type
+            if not file.filename.lower().endswith('.pdf'):
+                raise HTTPException(status_code=400, detail=f"File {file.filename} is not a PDF")
+            
+            # Generate unique file ID
+            file_id = f"comp_{uuid.uuid4().hex[:8]}"
+            
+            # Save file to temporary directory
+            file_path = os.path.join(temp_dir, f"{file_id}.pdf")
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            
+            # Store file info
+            uploaded_files[file_id] = {
+                "filename": file.filename,
+                "file_path": file_path,
+                "file_size": os.path.getsize(file_path),
+                "type": "comparison"
+            }
+            
+            uploaded_file_info.append({
+                "file_id": file_id,
+                "filename": file.filename,
+                "file_size": uploaded_files[file_id]["file_size"]
+            })
+        
+        return {
+            "success": True,
+            "message": f"{len(uploaded_file_info)} comparison PDF(s) uploaded successfully",
+            "uploaded_files": uploaded_file_info
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.get("/generate-report")
+async def generate_report(input_file: str = Query(..., description="Input file ID"), 
+                            comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
+    """Generate property comparison report"""
+    try:
+        # Validate input file exists
+        if input_file not in uploaded_files or uploaded_files[input_file]["type"] != "input":
+            raise HTTPException(status_code=404, detail="Input file not found")
+        
+        # Parse comparison file IDs
+        comparison_file_ids = [fid.strip() for fid in comparison_files.split(",")]
+        
+        # Validate comparison files exist
+        for file_id in comparison_file_ids:
+            if file_id not in uploaded_files or uploaded_files[file_id]["type"] != "comparison":
+                raise HTTPException(status_code=404, detail=f"Comparison file {file_id} not found")
+        
+        # Get file paths
+        input_file_path = uploaded_files[input_file]["file_path"]
+        comparison_file_paths = [uploaded_files[fid]["file_path"] for fid in comparison_file_ids]
+        
+        # Process the files using existing functions
+        input_property_info, input_price_info = extract_property_info(input_file_path)
+        
+        # Process all comparison files
+        all_comparison_property_info = []
+        all_comparison_price_info = []
+        
+        for comp_file_path in comparison_file_paths:
+            comp_property_info, comp_price_info = extract_property_info(comp_file_path)
+            if comp_property_info and comp_price_info:
+                all_comparison_property_info.extend(comp_property_info)
+                all_comparison_price_info.extend(comp_price_info)
+        
+        # Combine all data
+        all_property_info = input_property_info + all_comparison_property_info if input_property_info and all_comparison_property_info else (input_property_info or all_comparison_property_info or [])
+        all_price_info = input_price_info + all_comparison_price_info if input_price_info and all_comparison_price_info else (input_price_info or all_comparison_price_info or [])
+        
+        # Generate graphs
+        combined_price_analysis = pd.DataFrame(all_price_info)
+        generate_graphs(combined_price_analysis)
+        
+        # Create DataFrames
+        combined_df = pd.DataFrame(all_property_info).set_index('Address').T if all_property_info else pd.DataFrame()
+        combined_df_price = pd.DataFrame(all_price_info).set_index('Address').T if all_price_info else pd.DataFrame()
+        
+        # Generate appraisal report
+        input_sq_ft = input_property_info[0]['Living Sq Ft'] if input_property_info else "0"
+        appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft)
+        # Styles for PDF report
+        styles = getSampleStyleSheet()
+        # Generate PDF report in temporary directory
+        temp_pdf_path = os.path.join(temp_dir, "property_comparison.pdf")
+        doc = SimpleDocTemplate(temp_pdf_path, pagesize=letter, topMargin=30, bottomMargin=30, leftMargin=30, rightMargin=30)
+
+        # Generate styles for cells and table headers
+        cell_style = ParagraphStyle(
+            name='Cell',
+            parent=styles['BodyText'],
+            fontName='Times-Roman',
+            fontSize=10,
+            leading=12,
+            spaceAfter=0,
+            spaceBefore=0,
+            wordWrap='CJK',
+            alignment=1
+        )
+        cell_heading_style = ParagraphStyle(
+            name='CellHeading',
+            fontName='Times-Bold',
+            fontSize=12,
+            leading=12,
+        )
+        # Prepare data for PDF tables
+        property_data = [['Feature'] + list(combined_df.columns)]
+        for index, row in combined_df.iterrows():
+            property_data.append([index] + [str(cell) if pd.notna(cell) else '' for cell in row])
+        
+        price_data = [['Metric'] + list(combined_df_price.columns)]
+        for index, row in combined_df_price.iterrows():
+            price_data.append([index] + [str(cell) if pd.notna(cell) else '' for cell in row])
+        
+        # Wrap all cell content in Paragraph objects for word wrapping
+        for i, row in enumerate(property_data):
+            for j, cell in enumerate(row):
+                if i == 0:  # Header row
+                    property_data[i][j] = Paragraph(str(cell), cell_heading_style)
+                else:
+                    property_data[i][j] = Paragraph(str(cell), cell_style)
+        
+        for i, row in enumerate(price_data):
+            for j, cell in enumerate(row):
+                if i == 0:  # Header row
+                    price_data[i][j] = Paragraph(str(cell), cell_heading_style)
+                else:
+                    price_data[i][j] = Paragraph(str(cell), cell_style)
+        
+                 # Create tables
+        property_table = Table(property_data, colWidths=[0.8*inch] + [1.3*inch] * (len(property_data[0]) - 1))
+        price_table = Table(price_data, colWidths=[0.8*inch] + [1.3*inch] * (len(price_data[0]) - 1))
+        
+                 # Apply table styles
+        property_table.setStyle(TableStyle([
+             ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+             ('FONTNAME', (0, 0), (-1, 0), 'Times-Roman'),
+             ('FONTSIZE', (0, 0), (-1, 0), 9),
+             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+             ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+             ('GRID', (0, 0), (-1, -1), 1, colors.black),
+             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+             ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+             ('FONTNAME', (0, 1), (0, -1), 'Times-Bold'),
+             ('FONTSIZE', (0, 1), (0, -1), 7),
+             ('BACKGROUND', (0, 1), (0, -1), colors.lightblue),
+             ('ROWBACKGROUNDS', (1, 1), (-1, -1), [colors.beige, colors.white]),
+         ]))
+        
+        price_table.setStyle(TableStyle([
+             ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+             ('FONTNAME', (0, 0), (-1, 0), 'Times-Roman'),
+             ('FONTSIZE', (0, 0), (-1, 0), 9),
+             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+             ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+             ('GRID', (0, 0), (-1, -1), 1, colors.black),
+             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+             ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+             ('FONTNAME', (0, 1), (0, -1), 'Times-Bold'),
+             ('FONTSIZE', (0, 1), (0, -1), 7),
+             ('BACKGROUND', (0, 1), (0, -1), colors.lightblue),
+             ('ROWBACKGROUNDS', (1, 1), (-1, -1), [colors.beige, colors.white]),
+         ]))
+        
+        # Define styles
+        title_style = ParagraphStyle(
+            name='Title',
+            parent=styles['Title'],
+            fontSize=24,
+            spaceAfter=30,
+            alignment=1
+        )
+        
+        heading_style = ParagraphStyle(
+            name='Heading1',
+            parent=styles['Heading1'],
+            fontSize=18,
+            spaceAfter=12,
+            spaceBefore=12
+        )
+        
+        # Build PDF story
+        story = [
+            Paragraph("Property Comparison Analysis", title_style),
+            Spacer(1, 20),
+            Paragraph("Property Features Comparison", heading_style),
+            property_table,
+            Spacer(1, 30),
+            Paragraph("Price & Market Analysis", heading_style),
+            price_table,
+            PageBreak(),
+            Paragraph("List Price vs Sold Price", heading_style),
+        ]
+        
+        # Add graphs
+        try:
+            price_chart_path = os.path.join(temp_dir, 'list_price_vs_sold_price.png')
+            sqft_chart_path = os.path.join(temp_dir, 'list_price_sqft_vs_sold_price_sqft.png')
+            
+            if os.path.exists(price_chart_path):
+                price_chart = Image(price_chart_path, width=7*inch, height=5*inch)
+                story.append(price_chart)
+                story.append(Spacer(1, 10))
+            
+            if os.path.exists(sqft_chart_path):
+                story.append(PageBreak())
+                story.append(Paragraph("List $/Sq Ft vs Sold $/Sq Ft", heading_style))
+                sqft_chart = Image(sqft_chart_path, width=7*inch, height=5*inch)
+                story.append(sqft_chart)
+        except Exception as e:
+            print(f"Error adding graphs to PDF: {e}")
+        
+        # Add appraisal report
+        story.append(PageBreak())
+        story.append(Paragraph("Appraisal Report", heading_style))
+        story.append(Paragraph("From a comparative market analysis viewpoint:", styles['Heading2']))
+        story.append(Spacer(1, 10))
+        
+        bullet_style = ParagraphStyle(
+            name='Bullet',
+            parent=styles['BodyText'],
+            fontName='Times-Roman',
+            fontSize=12,
+            leading=12,
+            spaceAfter=0,
+        )
+        for item in appraisal_report:
+            story.append(Paragraph(f"• {item}", bullet_style))
+            story.append(Spacer(1, 6))
+        
+        # Build the PDF
+        doc.build(story)
+        
+        # Generate unique report ID
+        report_id = f"report_{uuid.uuid4().hex[:8]}"
+        
+        # Move generated PDF to reports directory (final output)
+        report_path = os.path.join(reports_dir, f"{report_id}.pdf")
+        shutil.move(temp_pdf_path, report_path)
+        
+        # Clean up temporary files
+        cleanup_temp_files()
+        
+        # Convert DataFrames to dictionaries for JSON response
+        property_comparison = {}
+        for col in combined_df.columns:
+            property_comparison[col] = combined_df[col].to_dict()
+        
+        price_analysis = {}
+        for col in combined_df_price.columns:
+            price_analysis[col] = combined_df_price[col].to_dict()
+        
+        return {
+            "success": True,
+            "message": "Report generated successfully",
+            "report_data": {
+                "property_comparison": property_comparison,
+                "price_analysis": price_analysis,
+                "appraisal_report": appraisal_report
+            },
+            "report_id": report_id,
+            "report_url": f"/download-report/{report_id}",
+            "graphs_generated": [
+                "list_price_vs_sold_price.png",
+                "list_price_sqft_vs_sold_price_sqft.png"
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+@app.get("/download-report/{report_id}")
+async def download_report(report_id: str):
+    """Download the generated PDF report"""
+    try:
+        report_path = os.path.join("reports", f"{report_id}.pdf")
+        
+        if not os.path.exists(report_path):
+            raise HTTPException(status_code=404, detail="Report not found")
+        
+        return FileResponse(
+            path=report_path,
+            filename=f"property_comparison_{report_id}.pdf",
+            media_type="application/pdf"
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+@app.get("/view-report/{report_id}")
+async def view_report(report_id: str):
+    """View the generated PDF report in browser"""
+    try:
+        report_path = os.path.join("reports", f"{report_id}.pdf")
+        
+        if not os.path.exists(report_path):
+            raise HTTPException(status_code=404, detail="Report not found")
+        
+        return FileResponse(
+            path=report_path,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "inline"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"View failed: {str(e)}")
+
+@app.get("/files")
+async def list_uploaded_files():
+    """List all uploaded files (for debugging)"""
+    return {
+        "uploaded_files": uploaded_files
+    }
+
+@app.delete("/files/{file_id}")
+async def delete_file(file_id: str):
+    """Delete an uploaded file"""
+    try:
+        if file_id not in uploaded_files:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_info = uploaded_files[file_id]
+        if os.path.exists(file_info["file_path"]):
+            os.remove(file_info["file_path"])
+        del uploaded_files[file_id]
+        
+        return {
+            "success": True,
+            "message": f"File {file_id} deleted successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
+def cleanup_on_shutdown():
+    """Clean up temporary directory on server shutdown"""
+    try:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            print(f"Temporary directory {temp_dir} cleaned up on shutdown")
+    except Exception as e:
+        print(f"Error cleaning up temporary directory: {e}")
+
+# %%
+if __name__ == "__main__":
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+    finally:
+        cleanup_on_shutdown()
