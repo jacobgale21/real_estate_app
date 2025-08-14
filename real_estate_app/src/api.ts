@@ -49,6 +49,12 @@ export interface GenerateReportResponse {
   graphs_generated: string[];
 }
 
+export interface GeneratePromptResponse {
+  success: boolean;
+  message: string;
+  prompt: string;
+}
+
 class ApiService {
   private baseUrl: string;
 
@@ -91,6 +97,21 @@ class ApiService {
       throw new Error(errorData.detail || "Upload failed");
     }
 
+    return response.json();
+  }
+
+  async generateChatgptPrompt(
+    inputFileId: string,
+    comparisonFileIds: string[]
+  ): Promise<GeneratePromptResponse> {
+    const url = `${this.baseUrl}/generate-report-chatgpt?input_file=${inputFileId}&comparison_files=${comparisonFileIds.join(",")}`;
+    const response = await fetch(url, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Prompt generation failed");
+    }
     return response.json();
   }
 

@@ -43,6 +43,7 @@ def extract_property_info(file_path):
 
             property_result = []
             price_result = []
+            features_result = []
             # Loop through each page of the PDF
             for page_num, page in enumerate(pdf_reader.pages):
                 # Only process even pages (MLS report)
@@ -62,6 +63,13 @@ def extract_property_info(file_path):
                         'Stories': None,
                         'Garage Spaces': None,
                         'Private Pool': None,
+                        
+                    }
+                    features_info = {
+                        'Private Pool Description': None,
+                        'Interior': None,
+                        'Exterior': None,
+                        'Public Remarks': None
                     }
 
                     price_info = {
@@ -70,7 +78,7 @@ def extract_property_info(file_path):
                         'List $/Sq Ft (Living)': None,
                         'Sold Price': None,
                         'Sold $/Sq Ft (Living)': None,
-                        'Days on Market': None
+                        'DOM': None
                     }
                     
                     # Convert text to lowercase for easier matching
@@ -113,6 +121,10 @@ def extract_property_info(file_path):
                             total_bedrooms_match = re.search(r'total bedrooms:\s*(.+)', line, re.IGNORECASE)
                             if total_bedrooms_match:
                                 property_info['Bedrooms'] = total_bedrooms_match.group(1).strip()
+                        elif 'private pool description' in line.lower():
+                            private_pool_description_match = re.search(r'private pool description:(.+)', line, re.IGNORECASE)
+                            if private_pool_description_match:
+                                features_info['Private Pool Description'] = private_pool_description_match.group(1).strip()
                         elif 'private pool' in line.lower():
                             private_pool_match = re.search(r'private pool:\s*(.+)', line, re.IGNORECASE)
                             if private_pool_match:
@@ -143,19 +155,70 @@ def extract_property_info(file_path):
                         elif 'days on market' in line.lower():
                             days_on_market_match = re.search(r'days on market:\s*(.+)', line, re.IGNORECASE)
                             if days_on_market_match:
-                                price_info['Days on Market'] = days_on_market_match.group(1).strip()
+                                price_info['DOM'] = days_on_market_match.group(1).strip()
                         elif 'st:' in line.lower():
                             status_match = re.search(r'st:\s+(.*?)\s+type:', line, re.IGNORECASE)
                             if status_match:
                                 property_info['Status'] = status_match.group(1).strip()
-
+                        elif 'interior' in line.lower():
+                            interior_match = re.search(r'interior:(.*)', line, re.IGNORECASE)
+                            if interior_match:
+                                features_info['Interior'] = interior_match.group(1).strip()
+                        elif 'exterior' in line.lower():
+                            exterior_match = re.search(r'exterior:(.*)', line, re.IGNORECASE)
+                            if exterior_match:
+                                features_info['Exterior'] = exterior_match.group(1).strip()
+                        elif 'public remarks' in line.lower():
+                            # Start collecting public remarks from this line
+                            remarks_start = line.find(':') + 1 if ':' in line else 0
+                            remarks_text = line[remarks_start:].strip()
+                            
+                            # Continue reading subsequent lines until we hit another section
+                            line_index = lines.index(line) + 1
+                            while line_index < len(lines):
+                                next_line = lines[line_index].strip()
+                                # Stop if we hit another section (usually starts with a field name and colon)
+                                if (next_line and 
+                                    any(keyword in next_line.lower() for keyword in 
+                                        ['charles gale'])):
+                                    break
+                                if next_line:  # Only add non-empty lines
+                                    remarks_text += ' ' + next_line
+                                line_index += 1
+                            
+                            features_info['Public Remarks'] = remarks_text.strip()
+                    
                     property_result.append(property_info)
+                    features_result.append(features_info)
                     price_result.append(price_info)
-            return property_result, price_result
+            return property_result, price_result, features_result
     except Exception as e:
         print(f"Error reading PDF file {file_path}: {e}")
         return None
-        
+def generate_chatgpt_prompt(property_info, price_info, features_info):
+    prompt = f"""
+    You are a professional real estate market analyst specializing in MLS-based comparative market reports. 
+    Your job is to create a detailed, appraisal-style markdown report comparing a subject property against multiple comparable sales. 
+    Follow the exact structure below:
+    1. Size & Price Positioning
+    2. Notable Feature Comparisons
+    3. Market Context & Value Implications
+    4. Appraisal Perspective
+    5. Summary
+    Include markdown tables for data and bullet points for observations. Be precise in calculations.\n\n"""
+    for idx, row in property_info.iterrows():
+        prompt += f"Property {idx + 1}:\n"
+        for key, value in row.items():
+            prompt += f"{key}: {value} | "
+        for key, value in price_info.iloc[idx].items():
+            prompt += f"{key}: {value} | "
+        for key, value in features_info.iloc[idx].items():
+            prompt += f"{key}: {value} | "
+        prompt += "\n\n"
+    prompt += f"Please produce the full appraisal-style comparison for the subject property: {property_info['Address'].iloc[0]} versus the other {len(property_info) - 1} properties. Follow the section structure exactly."
+    return prompt
+
+
 def generate_graphs(combined_df_price):
     # Clean data by removing None values and converting to numeric
     df_clean = combined_df_price.copy()
@@ -270,6 +333,8 @@ def generate_appraisal_report(input_price_info, comparison_price_info, input_sq_
     result.append(f"Applying this to {input_price_info['Address'].iloc[0]}'s {input_sq_ft} sq ft yields an estimated value of ~ ${estimated_value:.2f}.")
     result.append(f"{input_price_info['Address'].iloc[0]} ask of ${input_price_info['List Price'].iloc[0]:,.0f} is {input_price_info['List Price'].iloc[0]/estimated_value:.2f} times the estimated value.")
     return result
+
+    
 
 # Create FastAPI app instance
 app = FastAPI()
@@ -394,6 +459,57 @@ async def upload_comparison_pdf(files: List[UploadFile] = File(...)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+@app.get("/generate-report-chatgpt")
+async def generate_report_chatgpt(input_file: str = Query(..., description="Input file ID"), 
+                            comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
+    """Generate property comparison report"""
+    try:
+        # Validate input file exists
+        if input_file not in uploaded_files or uploaded_files[input_file]["type"] != "input":
+            raise HTTPException(status_code=404, detail="Input file not found")
+        
+        # Parse comparison file IDs
+        comparison_file_ids = [fid.strip() for fid in comparison_files.split(",")]
+        
+        # Validate comparison files exist
+        for file_id in comparison_file_ids:
+            if file_id not in uploaded_files or uploaded_files[file_id]["type"] != "comparison":
+                raise HTTPException(status_code=404, detail=f"Comparison file {file_id} not found")
+        
+        # Get file paths
+        input_file_path = uploaded_files[input_file]["file_path"]
+        comparison_file_paths = [uploaded_files[fid]["file_path"] for fid in comparison_file_ids]
+        
+        # Process the files using existing functions
+        input_property_info, input_price_info, input_features_info = extract_property_info(input_file_path)
+        
+        # Process all comparison files
+        all_comparison_property_info = []
+        all_comparison_price_info = []
+        all_comparison_features_info = []
+        for comp_file_path in comparison_file_paths:
+            comp_property_info, comp_price_info, comp_features_info = extract_property_info(comp_file_path)
+            if comp_property_info and comp_price_info:
+                all_comparison_property_info.extend(comp_property_info)
+                all_comparison_price_info.extend(comp_price_info)
+                all_comparison_features_info.extend(comp_features_info)
+        all_property_info = input_property_info + all_comparison_property_info if input_property_info and all_comparison_property_info else (input_property_info or all_comparison_property_info or [])
+        all_price_info = input_price_info + all_comparison_price_info if input_price_info and all_comparison_price_info else (input_price_info or all_comparison_price_info or [])
+        all_features_info = input_features_info + all_comparison_features_info if input_features_info and all_comparison_features_info else (input_features_info or all_comparison_features_info or [])
+        all_property_info = pd.DataFrame(all_property_info)
+        all_price_info = pd.DataFrame(all_price_info)
+        all_features_info = pd.DataFrame(all_features_info)
+        # Generate prompt
+        prompt = generate_chatgpt_prompt(all_property_info, all_price_info, all_features_info)
+
+        return {
+        "prompt": prompt,
+        "message": "Prompt generated successfully",
+        "success": True
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
 
 @app.get("/generate-report")
 async def generate_report(input_file: str = Query(..., description="Input file ID"), 
@@ -417,18 +533,18 @@ async def generate_report(input_file: str = Query(..., description="Input file I
         comparison_file_paths = [uploaded_files[fid]["file_path"] for fid in comparison_file_ids]
         
         # Process the files using existing functions
-        input_property_info, input_price_info = extract_property_info(input_file_path)
+        input_property_info, input_price_info, input_features_info = extract_property_info(input_file_path)
         
         # Process all comparison files
         all_comparison_property_info = []
         all_comparison_price_info = []
-        
+        all_comparison_features_info = []
         for comp_file_path in comparison_file_paths:
-            comp_property_info, comp_price_info = extract_property_info(comp_file_path)
+            comp_property_info, comp_price_info, comp_features_info = extract_property_info(comp_file_path)
             if comp_property_info and comp_price_info:
                 all_comparison_property_info.extend(comp_property_info)
                 all_comparison_price_info.extend(comp_price_info)
-        
+                all_comparison_features_info.extend(comp_features_info)
         # Combine all data
         all_property_info = input_property_info + all_comparison_property_info if input_property_info and all_comparison_property_info else (input_property_info or all_comparison_property_info or [])
         all_price_info = input_price_info + all_comparison_price_info if input_price_info and all_comparison_price_info else (input_price_info or all_comparison_price_info or [])
@@ -547,7 +663,16 @@ async def generate_report(input_file: str = Query(..., description="Input file I
             spaceAfter=12,
             spaceBefore=12
         )
+        paragraph_style = ParagraphStyle(
+            name='Paragraph',
+            parent=styles['BodyText'],
+            fontName='Times-Roman',
+            fontSize=12,
+            leading=12,
+            spaceAfter=0,
+        )
         
+
         # Build PDF story
         story = [
             Paragraph("Property Comparison Analysis", title_style),
