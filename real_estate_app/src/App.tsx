@@ -22,6 +22,9 @@ function App() {
   const [showPdfViewer, setShowPdfViewer] = useState(false);
   const [hasInputMLS, setHasInputMLS] = useState(true);
   const [showInputForm, setShowInputForm] = useState(false);
+  const [chatgptPrompt, setChatgptPrompt] = useState<string | null>(null);
+  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
+  const [showPromptSection, setShowPromptSection] = useState(false);
   const [manualInputData, setManualInputData] = useState({
     address: "",
     status: "Active",
@@ -121,6 +124,66 @@ function App() {
 
   const removeComparisonFile = (index: number) => {
     setComparisonFiles((prev) => prev.filter((_, i) => i !== index));
+    // Reset prompt when files change
+    setChatgptPrompt(null);
+    setShowPromptSection(false);
+  };
+
+  const handleGenerateChatgptPrompt = async () => {
+    if (hasInputMLS) {
+      if (!mlsReport || !mlsReport.file_id) {
+        setError("Please upload an MLS report first.");
+        return;
+      }
+    } else {
+      if (
+        !manualInputData.address ||
+        !manualInputData.livingSqFt ||
+        !manualInputData.listPrice
+      ) {
+        setError(
+          "Please enter at least Address, Living Square Feet, and List Price."
+        );
+        return;
+      }
+    }
+
+    if (comparisonFiles.length === 0) {
+      setError("Please upload at least one comparison property file.");
+      return;
+    }
+
+    const comparisonFileIds = comparisonFiles
+      .map((file) => file.file_id)
+      .filter((id): id is string => id !== undefined);
+
+    if (comparisonFileIds.length === 0) {
+      setError("No valid comparison files found.");
+      return;
+    }
+
+    setIsGeneratingPrompt(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await apiService.generateChatgptPrompt(
+        hasInputMLS ? mlsReport!.file_id! : "manual",
+        comparisonFileIds
+      );
+
+      if (response.success) {
+        setChatgptPrompt(response.prompt);
+        setShowPromptSection(true);
+        setSuccess("ChatGPT prompt generated successfully!");
+      } else {
+        setError(response.message || "Prompt generation failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Prompt generation failed");
+    } finally {
+      setIsGeneratingPrompt(false);
+    }
   };
 
   const handleGenerateReport = async () => {
@@ -254,6 +317,9 @@ function App() {
     setShowInputForm(false);
     setError(null);
     setSuccess(null);
+    // Reset prompt when input method changes
+    setChatgptPrompt(null);
+    setShowPromptSection(false);
   };
 
   const handleManualInputChange = (field: string, value: string) => {
@@ -423,7 +489,12 @@ function App() {
                     </div>
                     <button
                       className="bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg transition-colors duration-300 hover:bg-red-600"
-                      onClick={() => setMlsReport(null)}
+                      onClick={() => {
+                        setMlsReport(null);
+                        // Reset prompt when MLS report is removed
+                        setChatgptPrompt(null);
+                        setShowPromptSection(false);
+                      }}
                     >
                       ✕
                     </button>
@@ -884,8 +955,95 @@ function App() {
               )}
             </div>
 
+            {/* ChatGPT Prompt Generation Button */}
+            {((hasInputMLS && mlsReport) ||
+              (!hasInputMLS && manualInputData.address)) &&
+              comparisonFiles.length > 0 && (
+                <div className="mb-8 p-6 border-2 border-gray-200 rounded-2xl bg-green-50">
+                  <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+                    Step 3: Generate ChatGPT Prompt
+                  </h2>
+                  <p className="text-gray-600 mb-6">
+                    Generate a professional ChatGPT prompt for property analysis
+                    that you can use with ChatGPT or other AI tools.
+                  </p>
+
+                  <div className="text-center">
+                    <button
+                      className={`inline-flex items-center gap-2 px-6 py-3 text-lg font-semibold rounded-full transition-all duration-300 shadow-lg ${
+                        isGeneratingPrompt
+                          ? "bg-gray-400 cursor-not-allowed"
+                          : "bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:shadow-xl hover:-translate-y-0.5"
+                      }`}
+                      onClick={handleGenerateChatgptPrompt}
+                      disabled={isGeneratingPrompt}
+                    >
+                      {isGeneratingPrompt ? (
+                        <>
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                          Generating Prompt...
+                        </>
+                      ) : (
+                        <>🤖 Generate ChatGPT Prompt</>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            {/* ChatGPT Prompt Suggestion Section */}
+            {showPromptSection && chatgptPrompt && (
+              <div className="mb-8 p-6 border-2 border-gray-200 rounded-2xl bg-blue-50">
+                <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+                  🤖 ChatGPT Prompt Suggestion
+                </h2>
+                <p className="text-gray-600 mb-6">
+                  Copy this prompt and use it with ChatGPT or other AI tools for
+                  professional property analysis.
+                </p>
+
+                <div className="relative">
+                  <textarea
+                    value={chatgptPrompt}
+                    readOnly
+                    className="w-full h-64 p-4 border border-gray-300 rounded-lg bg-white font-mono text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Generated prompt will appear here..."
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(chatgptPrompt);
+                      setSuccess("Prompt copied to clipboard!");
+                    }}
+                    className="absolute top-2 right-2 bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600 transition-colors duration-300"
+                  >
+                    📋 Copy
+                  </button>
+                </div>
+
+                <div className="mt-4 text-sm text-gray-600">
+                  <p>
+                    <strong>How to use:</strong>
+                  </p>
+                  <ol className="list-decimal list-inside mt-2 space-y-1">
+                    <li>Copy the prompt above</li>
+                    <li>Go to ChatGPT or your preferred AI tool</li>
+                    <li>Paste the prompt and send it</li>
+                    <li>Review the generated analysis</li>
+                  </ol>
+                </div>
+              </div>
+            )}
+
             {/* Generate Report Button */}
             <div className="text-center py-8">
+              <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+                Step 4: Generate Property Analysis Report
+              </h2>
+              <p className="text-gray-600 mb-6">
+                Generate a comprehensive PDF report with property comparisons,
+                charts, and appraisal analysis.
+              </p>
+
               <button
                 className={`inline-flex items-center gap-2 px-8 py-4 text-lg font-semibold rounded-full transition-all duration-300 shadow-lg ${
                   (hasInputMLS && !mlsReport) ||
