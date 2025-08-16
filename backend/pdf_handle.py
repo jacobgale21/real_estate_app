@@ -66,6 +66,7 @@ def extract_property_info(file_path):
                         
                     }
                     features_info = {
+                        'Address': None,
                         'Private Pool Description': None,
                         'Interior': None,
                         'Exterior': None,
@@ -94,7 +95,8 @@ def extract_property_info(file_path):
                             address_match = re.search(pattern, line, re.IGNORECASE)
                             if address_match and not property_info['Address']:
                                 property_info['Address'] = address_match.group().strip()
-                                price_info['Address'] = address_match.group().strip()   
+                                price_info['Address'] = address_match.group().strip()
+                                features_info['Address'] = address_match.group().strip()
                         if 'subdivision:' in line.lower():
                             subdivision_match = re.search(r'subdivision:\s*(.+)', line, re.IGNORECASE)
                             if subdivision_match:
@@ -347,66 +349,70 @@ def generate_chatgpt_prompt(property_info, price_info, features_info):
 
 def generate_graphs(combined_df_price):
     # Clean data by removing None values and converting to numeric
-    df_clean = combined_df_price.copy()
+    try:
+        df_clean = combined_df_price.copy()
 
-    # Convert price columns to numeric, removing $ and commas
-    for col in ['List Price', 'Sold Price']:
-        df_clean[col] = pd.to_numeric(df_clean[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+        # Convert price columns to numeric, removing $ and commas
+        for col in ['List Price', 'Sold Price']:
+            df_clean[col] = pd.to_numeric(df_clean[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
 
-    for col in ['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)']:
-        df_clean[col] = pd.to_numeric(df_clean[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+        for col in ['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)']:
+            df_clean[col] = pd.to_numeric(df_clean[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
 
-    # Remove rows where both values are None/NaN
-    df_clean = df_clean.dropna(subset=['List Price', 'Sold Price'], how='all')
+        # Remove rows where both values are None/NaN
+        df_clean = df_clean.dropna(subset=['List Price', 'Sold Price'], how='all')
 
-    # List Price vs Sold Price Bar Chart
-    price_fig = plt.figure(figsize=(12, 8))
+        # List Price vs Sold Price Bar Chart
+        price_fig = plt.figure(figsize=(12, 8))
 
-    # Filter for properties with both list and sold prices
-    valid_data = df_clean.dropna(subset=['List Price', 'Sold Price'], how='all')
+        # Filter for properties with both list and sold prices
+        valid_data = df_clean.dropna(subset=['List Price', 'Sold Price'], how='all')
 
-    if not valid_data.empty:
-        addresses = valid_data['Address'].tolist()
-        list_prices = valid_data['List Price'].tolist()
-        sold_prices = valid_data['Sold Price'].tolist()
+        if not valid_data.empty:
+            addresses = valid_data['Address'].tolist()
+            list_prices = valid_data['List Price'].tolist()
+            sold_prices = valid_data['Sold Price'].tolist()
+            
+            x = range(len(addresses))
+            width = 0.35
         
-        x = range(len(addresses))
-        width = 0.35
-    
-        plt.bar([i - width/2 for i in x], list_prices, width, label='List Price', color='skyblue', alpha=0.8)
-        plt.bar([i + width/2 for i in x], sold_prices, width, label='Sold Price', color='lightcoral', alpha=0.8)         
-        plt.xlabel('Properties')
-        plt.ylabel('Price ($ MM)')
-        plt.title('List Price vs Sold Price Comparison')
-        plt.xticks(x, [addr.split()[0] + ' ' + addr.split()[1] if len(addr.split()) > 1 else addr for addr in addresses], rotation=45, ha='right')
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(temp_dir, 'list_price_vs_sold_price.png'), dpi=300, bbox_inches='tight')
-        
+            plt.bar([i - width/2 for i in x], list_prices, width, label='List Price', color='skyblue', alpha=0.8)
+            plt.bar([i + width/2 for i in x], sold_prices, width, label='Sold Price', color='lightcoral', alpha=0.8)         
+            plt.xlabel('Properties')
+            plt.ylabel('Price ($ MM)')
+            plt.title('List Price vs Sold Price Comparison')
+            plt.xticks(x, [addr.split()[0] + ' ' + addr.split()[1] if len(addr.split()) > 1 else addr for addr in addresses], rotation=45, ha='right')
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(temp_dir, 'list_price_vs_sold_price.png'), dpi=300, bbox_inches='tight')
+            
 
-    # List $/Sq Ft vs Sold $/Sq Ft Bar Chart
-    plt.figure(figsize=(12, 8))
+        # List $/Sq Ft vs Sold $/Sq Ft Bar Chart
+        plt.figure(figsize=(12, 8))
 
-    # Filter for properties with both list and sold price per sq ft
-    valid_sqft_data = df_clean.dropna(subset=['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)'], how='all')
+        # Filter for properties with both list and sold price per sq ft
+        valid_sqft_data = df_clean.dropna(subset=['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)'], how='all')
 
-    if not valid_sqft_data.empty:
-        addresses_sqft = valid_sqft_data['Address'].tolist()
-        list_sqft = valid_sqft_data['List $/Sq Ft (Living)'].tolist()
-        sold_sqft = valid_sqft_data['Sold $/Sq Ft (Living)'].tolist()
-        
-        x_sqft = range(len(addresses_sqft))
-        width = 0.35
-        
-        plt.bar([i - width/2 for i in x_sqft], list_sqft, width, label='List $/Sq Ft', color='lightgreen', alpha=0.8)
-        plt.bar([i + width/2 for i in x_sqft], sold_sqft, width, label='Sold $/Sq Ft', color='orange', alpha=0.8)
-        plt.xlabel('Properties')
-        plt.ylabel('Price per Sq Ft ($)')
-        plt.title('List \$/ Sq Ft vs Sold \$/ Sq Ft Comparison')
-        plt.xticks(x_sqft, [addr.split()[0] + ' ' + addr.split()[1] if len(addr.split()) > 1 else addr for addr in addresses_sqft], rotation=45, ha='right')
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(temp_dir, 'list_price_sqft_vs_sold_price_sqft.png'), dpi=300, bbox_inches='tight')
+        if not valid_sqft_data.empty:
+            addresses_sqft = valid_sqft_data['Address'].tolist()
+            list_sqft = valid_sqft_data['List $/Sq Ft (Living)'].tolist()
+            sold_sqft = valid_sqft_data['Sold $/Sq Ft (Living)'].tolist()
+            
+            x_sqft = range(len(addresses_sqft))
+            width = 0.35
+            
+            plt.bar([i - width/2 for i in x_sqft], list_sqft, width, label='List $/Sq Ft', color='lightgreen', alpha=0.8)
+            plt.bar([i + width/2 for i in x_sqft], sold_sqft, width, label='Sold $/Sq Ft', color='orange', alpha=0.8)
+            plt.xlabel('Properties')
+            plt.ylabel('Price per Sq Ft ($)')
+            plt.title('List \$/ Sq Ft vs Sold \$/ Sq Ft Comparison')
+            plt.xticks(x_sqft, [addr.split()[0] + ' ' + addr.split()[1] if len(addr.split()) > 1 else addr for addr in addresses_sqft], rotation=45, ha='right')
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(temp_dir, 'list_price_sqft_vs_sold_price_sqft.png'), dpi=300, bbox_inches='tight')
+    except Exception as e:
+        print(f"Error generating graphs: {e}")
+        return None
 
 
 def cleanup_temp_files():
@@ -451,9 +457,10 @@ def generate_appraisal_report(input_price_info, comparison_price_info, input_sq_
             comparison_price_info[col] = pd.to_numeric(comparison_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
 
         for col in ['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)']:
-            if isinstance(input_price_info[col], str):
+            # Check if the column contains string data (object dtype usually indicates strings)
+            if input_price_info[col].dtype == 'object':
                 input_price_info[col] = pd.to_numeric(input_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
-            if isinstance(comparison_price_info[col], str):
+            if comparison_price_info[col].dtype == 'object':
                 comparison_price_info[col] = pd.to_numeric(comparison_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
         # Calculate the average of the other properties and estimated value of the input property
         if not is_rental:
@@ -516,6 +523,10 @@ class ManualInputData(BaseModel):
     soldPrice: str
     soldPricePerSqFt: str
     daysOnMarket: str
+    isRental: bool
+    internalFeatures: str
+    exteriorFeatures: str
+    publicRemarks: str
 
 # API Endpoints
 @app.get("/")
@@ -696,7 +707,7 @@ async def generate_report(input_file: str = Query(..., description="Input file I
         # Create DataFrames
         combined_df = pd.DataFrame(all_property_info).set_index('Address').T if all_property_info else pd.DataFrame()
         combined_df_price = pd.DataFrame(all_price_info).set_index('Address').T if all_price_info else pd.DataFrame()
-        
+        combined_df_features = pd.DataFrame(all_features_info).set_index('Address').T if all_features_info else pd.DataFrame()
         # Generate appraisal report
         input_sq_ft = input_property_info[0]['Living Sq Ft'] if input_property_info else "0"
         appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft, is_rental)
@@ -940,15 +951,21 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
             'List $/Sq Ft (Living)': manual_data.listPricePerSqFt,
             'Sold Price': manual_data.soldPrice,
             'Sold $/Sq Ft (Living)': manual_data.soldPricePerSqFt,
-            'Days on Market': manual_data.daysOnMarket
+            'DOM': manual_data.daysOnMarket
         }]
         
+        input_features_info = [{
+            'Address': manual_data.address,
+            'Internal Features': manual_data.internalFeatures,
+            'Exterior Features': manual_data.exteriorFeatures,
+            'Public Remarks': manual_data.publicRemarks
+        }]
         # Process all comparison files
         all_comparison_property_info = []
         all_comparison_price_info = []
         all_comparison_features_info = []
         for comp_file_path in comparison_file_paths:
-            comp_property_info, comp_price_info, comp_features_info, is_rental = extract_property_info(comp_file_path)
+            comp_property_info, comp_price_info, comp_features_info, _ = extract_property_info(comp_file_path)
             if comp_property_info and comp_price_info:
                 all_comparison_property_info.extend(comp_property_info)
                 all_comparison_price_info.extend(comp_price_info)
@@ -957,7 +974,7 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
         # Combine all data
         all_property_info = input_property_info + all_comparison_property_info if input_property_info and all_comparison_property_info else (input_property_info or all_comparison_property_info or [])
         all_price_info = input_price_info + all_comparison_price_info if input_price_info and all_comparison_price_info else (input_price_info or all_comparison_price_info or [])
-        
+        all_features_info = input_features_info + all_comparison_features_info if input_features_info and all_comparison_features_info else (input_features_info or all_comparison_features_info or [])
         # Generate graphs
         combined_price_analysis = pd.DataFrame(all_price_info)
         generate_graphs(combined_price_analysis)
@@ -965,10 +982,10 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
         # Create DataFrames
         combined_df = pd.DataFrame(all_property_info).set_index('Address').T if all_property_info else pd.DataFrame()
         combined_df_price = pd.DataFrame(all_price_info).set_index('Address').T if all_price_info else pd.DataFrame()
-        
-        # Generate appraisal report
+        combined_df_features = pd.DataFrame(all_features_info).set_index('Address').T if all_features_info else pd.DataFrame()
+        # Generate appraisal report - use the manual input rental status
         input_sq_ft = input_property_info[0]['Living Sq Ft'] if input_property_info else "0"
-        appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft, is_rental)
+        appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft, manual_data.isRental)
         
         # Styles for PDF report
         styles = getSampleStyleSheet()
@@ -1144,7 +1161,6 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
         price_analysis = {}
         for col in combined_df_price.columns:
             price_analysis[col] = combined_df_price[col].to_dict()
-        
         return {
             "success": True,
             "message": "Report generated successfully",

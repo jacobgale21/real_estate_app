@@ -38,6 +38,10 @@ export interface ManualInputData {
   soldPrice: string;
   soldPricePerSqFt: string;
   daysOnMarket: string;
+  isRental: boolean;
+  internalFeatures: string;
+  exteriorFeatures: string;
+  publicRemarks: string;
 }
 
 export interface GenerateReportResponse {

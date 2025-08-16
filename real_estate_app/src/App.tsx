@@ -56,6 +56,10 @@ function App() {
     soldPrice: "",
     soldPricePerSqFt: "",
     daysOnMarket: "",
+    isRental: false,
+    internalFeatures: "",
+    exteriorFeatures: "",
+    publicRemarks: "",
   });
   const handleMlsReportUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -326,6 +330,10 @@ function App() {
       soldPrice: "",
       soldPricePerSqFt: "",
       daysOnMarket: "",
+      isRental: false,
+      internalFeatures: "",
+      exteriorFeatures: "",
+      publicRemarks: "",
     });
     setShowInputForm(false);
     setError(null);
@@ -335,7 +343,7 @@ function App() {
     setShowPromptSection(false);
   };
 
-  const handleManualInputChange = (field: string, value: string) => {
+  const handleManualInputChange = (field: string, value: string | boolean) => {
     setManualInputData((prev) => {
       const updatedData = {
         ...prev,
@@ -344,8 +352,18 @@ function App() {
 
       // Auto-calculate list price per sq ft when both living sq ft and list price are available
       if (field === "livingSqFt" || field === "listPrice") {
-        const livingSqFt = field === "livingSqFt" ? value : prev.livingSqFt;
-        const listPrice = field === "listPrice" ? value : prev.listPrice;
+        const livingSqFt =
+          field === "livingSqFt"
+            ? typeof value === "string"
+              ? value
+              : ""
+            : prev.livingSqFt;
+        const listPrice =
+          field === "listPrice"
+            ? typeof value === "string"
+              ? value
+              : ""
+            : prev.listPrice;
 
         if (livingSqFt && listPrice) {
           // Remove commas and $ signs for calculation
@@ -879,6 +897,94 @@ function App() {
                             }
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             placeholder="45"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Additional Property Information */}
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                        Additional Property Information
+                      </h3>
+
+                      <div className="grid grid-cols-1 gap-4">
+                        {/* Rental Property Toggle */}
+                        <div className="flex items-center space-x-3">
+                          <input
+                            type="checkbox"
+                            id="isRental"
+                            checked={manualInputData.isRental}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "isRental",
+                                e.target.checked
+                              )
+                            }
+                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                          />
+                          <label
+                            htmlFor="isRental"
+                            className="text-sm font-medium text-gray-700"
+                          >
+                            This is a rental property
+                          </label>
+                        </div>
+
+                        {/* Internal Features */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Internal Features
+                          </label>
+                          <textarea
+                            value={manualInputData.internalFeatures}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "internalFeatures",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="e.g., Granite countertops, hardwood floors, stainless steel appliances..."
+                            rows={3}
+                          />
+                        </div>
+
+                        {/* Exterior Features */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Exterior Features
+                          </label>
+                          <textarea
+                            value={manualInputData.exteriorFeatures}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "exteriorFeatures",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="e.g., Brick exterior, covered patio, mature landscaping..."
+                            rows={3}
+                          />
+                        </div>
+
+                        {/* Public Remarks */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Public Remarks
+                          </label>
+                          <textarea
+                            value={manualInputData.publicRemarks}
+                            onChange={(e) =>
+                              handleManualInputChange(
+                                "publicRemarks",
+                                e.target.value
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="Detailed description of the property, any special features, recent updates, or notable characteristics..."
+                            rows={5}
                           />
                         </div>
                       </div>
