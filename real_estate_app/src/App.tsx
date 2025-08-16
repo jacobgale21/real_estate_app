@@ -57,8 +57,8 @@ function App() {
     soldPricePerSqFt: "",
     daysOnMarket: "",
     isRental: false,
-    internalFeatures: "",
-    exteriorFeatures: "",
+    interior: "",
+    exterior: "",
     publicRemarks: "",
   });
   const handleMlsReportUpload = async (
@@ -184,10 +184,19 @@ function App() {
     setSuccess(null);
 
     try {
-      const response = await apiService.generateChatgptPrompt(
-        hasInputMLS ? mlsReport!.file_id! : "manual",
-        comparisonFileIds
-      );
+      let response;
+      if (hasInputMLS) {
+        response = await apiService.generateChatgptPrompt(
+          mlsReport!.file_id!,
+          comparisonFileIds
+        );
+      } else {
+        // Generate prompt with manual input data
+        response = await apiService.generateChatgptPromptManual(
+          manualInputData as ManualInputData,
+          comparisonFileIds
+        );
+      }
 
       if (response.success) {
         setChatgptPrompt(response.prompt);
@@ -331,8 +340,8 @@ function App() {
       soldPricePerSqFt: "",
       daysOnMarket: "",
       isRental: false,
-      internalFeatures: "",
-      exteriorFeatures: "",
+      interior: "",
+      exterior: "",
       publicRemarks: "",
     });
     setShowInputForm(false);
@@ -937,10 +946,10 @@ function App() {
                             Internal Features
                           </label>
                           <textarea
-                            value={manualInputData.internalFeatures}
+                            value={manualInputData.interior}
                             onChange={(e) =>
                               handleManualInputChange(
-                                "internalFeatures",
+                                "interior",
                                 e.target.value
                               )
                             }
@@ -956,10 +965,10 @@ function App() {
                             Exterior Features
                           </label>
                           <textarea
-                            value={manualInputData.exteriorFeatures}
+                            value={manualInputData.exterior}
                             onChange={(e) =>
                               handleManualInputChange(
-                                "exteriorFeatures",
+                                "exterior",
                                 e.target.value
                               )
                             }

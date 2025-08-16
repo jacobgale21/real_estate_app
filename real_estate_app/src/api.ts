@@ -39,8 +39,8 @@ export interface ManualInputData {
   soldPricePerSqFt: string;
   daysOnMarket: string;
   isRental: boolean;
-  internalFeatures: string;
-  exteriorFeatures: string;
+  interior: string;
+  exterior: string;
   publicRemarks: string;
 }
 
@@ -119,6 +119,29 @@ class ApiService {
     return response.json();
   }
 
+  async generateChatgptPromptManual(
+    manualData: ManualInputData,
+    comparisonFileIds: string[]
+  ): Promise<GeneratePromptResponse> {
+    const comparisonFilesParam = comparisonFileIds.join(",");
+    const url = `${this.baseUrl}/generate-chatgpt-prompt-manual?comparison_files=${comparisonFilesParam}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(manualData),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Prompt generation failed");
+    }
+
+    return response.json();
+  }
+
   // Generate report with file input
   async generateReport(
     inputFileId: string,
@@ -162,7 +185,6 @@ class ApiService {
 
     return response.json();
   }
-
   // Download report
   async downloadReport(reportId: string): Promise<Blob> {
     const response = await fetch(

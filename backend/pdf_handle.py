@@ -574,8 +574,8 @@ def combine_to_dataframe(comparison_file_ids, manual_data = None, input_file: st
             
             input_features_info = [{
                 'Address': manual_data.address,
-                'Internal Features': manual_data.internalFeatures,
-                'Exterior Features': manual_data.exteriorFeatures,
+                'Interior': manual_data.interior,
+                'Exterior': manual_data.exterior,
                 'Public Remarks': manual_data.publicRemarks
             }]
         except Exception as E:
@@ -665,8 +665,8 @@ class ManualInputData(BaseModel):
     soldPricePerSqFt: str
     daysOnMarket: str
     isRental: bool
-    internalFeatures: str
-    exteriorFeatures: str
+    interior: str
+    exterior: str
     publicRemarks: str
 
 # API Endpoints
@@ -1021,7 +1021,7 @@ async def generate_report(input_file: str = Query(..., description="Input file I
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
-@app.get("/generate-chatgpt-prompt-manual")
+@app.post("/generate-chatgpt-prompt-manual")
 async def generate_chatgpt_prompt_manual(manual_data: ManualInputData, comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
     try:
         # Parse comparison file IDs
