@@ -201,11 +201,11 @@
     margin: 1rem;
     border-radius: 1rem;
   }
-  
+
   [data-amplify-form] {
     padding: 1.5rem;
   }
-  
+
   [data-amplify-button][data-variation="primary"] {
     padding: 0.875rem 1.25rem;
   }

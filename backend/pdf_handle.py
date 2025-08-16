@@ -35,7 +35,7 @@ def extract_property_info(file_path):
     Returns:
         dict: Dictionary containing extracted property information
     """
-
+    rental_report = False
     try:
         with open(file_path, 'rb') as file:
             # Create PDF reader object
@@ -46,10 +46,10 @@ def extract_property_info(file_path):
             features_result = []
             # Loop through each page of the PDF
             for page_num, page in enumerate(pdf_reader.pages):
-                # Only process even pages (MLS report)
-                if page_num % 2 == 0:
-                    # Extract text from the page
-                    text = page.extract_text()
+                # Extract text from the page
+                text = page.extract_text()
+                # Check if the first line contains residentialcustomer report
+                if 'residential customer report' in text.lower(): 
                     # Initialize dictionaries to store property and price information
                     property_info = {
                         'Address': None,
@@ -80,9 +80,7 @@ def extract_property_info(file_path):
                         'Sold $/Sq Ft (Living)': None,
                         'DOM': None
                     }
-                    
-                    # Convert text to lowercase for easier matching
-                    text_lower = text.lower()
+
                     lines = text.split('\n')
                     
                     # Extract address (look for patterns like "1310 Lamarville Dr" or "1163 N Prescott Dr")
@@ -157,7 +155,7 @@ def extract_property_info(file_path):
                             if days_on_market_match:
                                 price_info['DOM'] = days_on_market_match.group(1).strip()
                         elif 'st:' in line.lower():
-                            status_match = re.search(r'st:\s+(.*?)\s+type:', line, re.IGNORECASE)
+                            status_match = re.search(r'st:\s+(.*?)\s+type', line, re.IGNORECASE)
                             if status_match:
                                 property_info['Status'] = status_match.group(1).strip()
                         elif 'interior' in line.lower():
@@ -187,11 +185,139 @@ def extract_property_info(file_path):
                                 line_index += 1
                             
                             features_info['Public Remarks'] = remarks_text.strip()
-                    
                     property_result.append(property_info)
                     features_result.append(features_info)
                     price_result.append(price_info)
-            return property_result, price_result, features_result
+                # Process rental property report
+                elif "rental customer report" in text.lower():
+                    rental_report = True
+                        # Initialize dictionaries to store property and price information
+                    property_info = {
+                        'Address': None,
+                        'Status': None,
+                        'Subdivision': None,
+                        'Year Built': None,
+                        'Living Sq Ft': None,
+                        'Total Sq Ft': None,
+                        'Bedrooms': None,
+                        'Bathrooms (Full)': None,
+                        'Stories': None,
+                        'Garage Spaces': None,
+                        'Private Pool': None,
+                        
+                    }
+                    features_info = {
+                        'Private Pool Description': None,
+                        'Interior': None,
+                        'Exterior': None,
+                        'Public Remarks': None,
+                         
+                    }
+
+                    price_info = {
+                        'Address': None,
+                        'List Price': None,
+                        'List $/Sq Ft (Living)': None,
+                        'Sold Price': None,
+                        'Sold $/Sq Ft (Living)': None,
+                        'DOM': None
+                    }
+
+                    lines = text.split('\n')
+                    
+                    # Extract address (look for patterns like "1310 Lamarville Dr" or "1163 N Prescott Dr")
+                    address_patterns = [
+                        r'\d+\s+[A-Za-z\s]+(?:Dr|Ave|St|Blvd|Ln|Way|Ct|Pl)',
+                        r'\d+\s+[A-Za-z\s]+(?:Drive|Avenue|Street|Boulevard|Lane|Way|Court|Place)'
+                    ]
+                    # Iterate through each line of the text and extract the property and price information through regex statements
+                    for line in lines:
+                        for pattern in address_patterns:
+                            address_match = re.search(pattern, line, re.IGNORECASE)
+                            if address_match and not property_info['Address']:
+                                property_info['Address'] = address_match.group().strip()
+                                price_info['Address'] = address_match.group().strip()   
+                        if 'subdivision:' in line.lower():
+                            subdivision_match = re.search(r'subdivision:\s*(.+)\s+front exposure', line, re.IGNORECASE)
+                            if subdivision_match:
+                                property_info['Subdivision'] = subdivision_match.group(1).strip()
+                        elif 'sqft - living' in line.lower():
+                            living_sq_ft_match = re.search(r'sqft - living:\s*(.+)\s+total units', line, re.IGNORECASE)
+                            if living_sq_ft_match:
+                                property_info['Living Sq Ft'] = living_sq_ft_match.group(1).strip()
+                        elif 'sqft - total' in line.lower():
+                            total_sq_ft_match = re.search(r'sqft - total:\s*(.+)\s+unit floor', line, re.IGNORECASE)
+                            if total_sq_ft_match:
+                                property_info['Total Sq Ft'] = total_sq_ft_match.group(1).strip()
+                        elif 'year built' in line.lower():
+                            year_built_match = re.search(r'year built:\s*(.+)\s+for sale', line, re.IGNORECASE)
+                            if year_built_match:
+                                property_info['Year Built'] = year_built_match.group(1).strip()
+                        elif 'baths - total' in line.lower():
+                            baths_total_match = re.search(r'baths - total:\s*(.+)\s+private pool', line, re.IGNORECASE)
+                            if baths_total_match:
+                                property_info['Bathrooms (Full)'] = baths_total_match.group(1).strip()
+                            private_pool_match = re.search(r'private pool:\s*(.+)', line, re.IGNORECASE)
+                            if private_pool_match:
+                                property_info['Private Pool'] = private_pool_match.group(1).strip()
+                        elif 'total bedrooms' in line.lower():
+                            total_bedrooms_match = re.search(r'total bedrooms:\s*(.+)\s+governing', line, re.IGNORECASE)
+                            if total_bedrooms_match:
+                                property_info['Bedrooms'] = total_bedrooms_match.group(1).strip()
+                        elif 'total floors in bldg' in line.lower():
+                            stories_match = re.search(r'total floors in bldg:\s*(.+)', line, re.IGNORECASE)
+                            if stories_match:
+                                property_info['Stories'] = stories_match.group(1).strip()
+                        elif 'garage spaces' in line.lower():
+                            garage_match = re.search(r'garage spaces:\s*(.+)\s+membership', line, re.IGNORECASE)
+                            if garage_match:
+                                property_info['Garage Spaces'] = garage_match.group(1).strip()
+                        elif 'orig. lp' in line.lower():
+                            # Extract list price between "orig lp:" and "list price/sqft:"
+                            status_match = re.search(r'st:\s+(.*?)\s+orig. lp', line, re.IGNORECASE)
+                            if status_match:
+                                property_info['Status'] = status_match.group(1).strip()
+                        elif 'rental price' in line.lower():
+                            sold_price_match = re.search(r"rental price:\s*(.+)", line, re.IGNORECASE)
+                            if sold_price_match:
+                                price_info['List Price'] = sold_price_match.group(1).strip()
+                        elif 'days on market' in line.lower():
+                            days_on_market_match = re.search(r'days on market:\s*(.+)', line, re.IGNORECASE)
+                            if days_on_market_match:
+                                price_info['DOM'] = days_on_market_match.group(1).strip()
+                        elif 'interior features' in line.lower():
+                            interior_match = re.search(r'interior features:(.*)', line, re.IGNORECASE)
+                            if interior_match:
+                                features_info['Interior'] = interior_match.group(1).strip()
+                        elif 'exterior features' in line.lower():
+                            exterior_match = re.search(r'exterior features:(.*)', line, re.IGNORECASE)
+                            if exterior_match:
+                                features_info['Exterior'] = exterior_match.group(1).strip()
+                        elif 'public remarks' in line.lower():
+                            # Start collecting public remarks from this line
+                            remarks_start = line.find(':') + 1 if ':' in line else 0
+                            remarks_text = line[remarks_start:].strip()
+                            
+                            # Continue reading subsequent lines until we hit another section
+                            line_index = lines.index(line) + 1
+                            while line_index < len(lines):
+                                next_line = lines[line_index].strip()
+                                # Stop if we hit another section (usually starts with a field name and colon)
+                                if (next_line and 
+                                    any(keyword in next_line.lower() for keyword in 
+                                        ['charles gale'])):
+                                    break
+                                if next_line:  # Only add non-empty lines
+                                    remarks_text += ' ' + next_line
+                                line_index += 1
+                            
+                            features_info['Public Remarks'] = remarks_text.strip()
+                    price_info['List $/Sq Ft (Living)'] = pd.to_numeric(price_info['List Price'].replace('$', '').replace(',', ''), errors='coerce') / pd.to_numeric(property_info['Living Sq Ft'].replace(',', ''), errors='coerce')
+                    property_result.append(property_info)
+                    features_result.append(features_info)
+                    price_result.append(price_info)
+            return property_result, price_result, features_result, rental_report
+    
     except Exception as e:
         print(f"Error reading PDF file {file_path}: {e}")
         return None
@@ -307,32 +433,46 @@ def cleanup_temp_files():
     except Exception as e:
         print(f"Error cleaning up temporary files: {e}")
 
-def generate_appraisal_report(input_price_info, comparison_price_info, input_sq_ft):
+def generate_appraisal_report(input_price_info, comparison_price_info, input_sq_ft, is_rental):
     # Compare the average of the other properties to the target property
     # Calculate the average of the other properties
     # List containing inputs
-    result = []
-    input_price_info = pd.DataFrame(input_price_info)
-    comparison_price_info = pd.DataFrame(comparison_price_info)
+    try:
+        result = []
+        input_price_info = pd.DataFrame(input_price_info)
+        comparison_price_info = pd.DataFrame(comparison_price_info)
 
-    # Remove commas from input_sq_ft and convert to integer
-    input_sq_ft = int(input_sq_ft.replace(',', ''))
+        # Remove commas from input_sq_ft and convert to integer
+        input_sq_ft = int(input_sq_ft.replace(',', ''))
 
-    # Convert price columns to numeric, removing $ and commas
-    for col in ['List Price', 'Sold Price']:
-        input_price_info[col] = pd.to_numeric(input_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
-        comparison_price_info[col] = pd.to_numeric(comparison_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+        # Convert price columns to numeric, removing $ and commas
+        for col in ['List Price', 'Sold Price']:
+            input_price_info[col] = pd.to_numeric(input_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+            comparison_price_info[col] = pd.to_numeric(comparison_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
 
-    for col in ['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)']:
-        input_price_info[col] = pd.to_numeric(input_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
-        comparison_price_info[col] = pd.to_numeric(comparison_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
-    # Calculate the average of the other properties and estimated value of the input property
-    comparison_mean = comparison_price_info['Sold $/Sq Ft (Living)'].mean()
-    estimated_value = input_sq_ft * comparison_mean
-    result.append(f"Using the {len(comparison_price_info)} comparable properties, the average sold $/sq ft = ${comparison_mean:.2f}.")
-    result.append(f"Applying this to {input_price_info['Address'].iloc[0]}'s {input_sq_ft} sq ft yields an estimated value of ~ ${estimated_value:.2f}.")
-    result.append(f"{input_price_info['Address'].iloc[0]} ask of ${input_price_info['List Price'].iloc[0]:,.0f} is {input_price_info['List Price'].iloc[0]/estimated_value:.2f} times the estimated value.")
-    return result
+        for col in ['List $/Sq Ft (Living)', 'Sold $/Sq Ft (Living)']:
+            if isinstance(input_price_info[col], str):
+                input_price_info[col] = pd.to_numeric(input_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+            if isinstance(comparison_price_info[col], str):
+                comparison_price_info[col] = pd.to_numeric(comparison_price_info[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
+        # Calculate the average of the other properties and estimated value of the input property
+        if not is_rental:
+            comparison_mean = comparison_price_info['Sold $/Sq Ft (Living)'].mean()
+            estimated_value = input_sq_ft * comparison_mean
+            result.append(f"Using the {len(comparison_price_info)} comparable properties, the average sold $/sq ft = ${comparison_mean:.2f}.")
+            result.append(f"Applying this to {input_price_info['Address'].iloc[0]}'s {input_sq_ft} sq ft yields an estimated value of ~ ${estimated_value:.2f}.")
+            result.append(f"{input_price_info['Address'].iloc[0]} ask of ${input_price_info['List Price'].iloc[0]:,.0f} is {input_price_info['List Price'].iloc[0]/estimated_value:.2f} times the estimated value.")
+            return result
+        else:
+            comparison_mean = comparison_price_info['List $/Sq Ft (Living)'].mean()
+            estimated_value = input_sq_ft * comparison_mean
+            result.append(f"Using the {len(comparison_price_info)} comparable properties, the average list $/sq ft = ${comparison_mean:.2f}.")
+            result.append(f"Applying this to {input_price_info['Address'].iloc[0]}'s {input_sq_ft} sq ft yields an estimated value of ~ ${estimated_value:.2f}.")
+            result.append(f"{input_price_info['Address'].iloc[0]} ask of ${input_price_info['List Price'].iloc[0]:,.0f} is {input_price_info['List Price'].iloc[0]/estimated_value:.2f} times the estimated value.")
+            return result
+    except Exception as e:
+        print(f"Error generating appraisal report: {e}")
+        return
 
     
 
@@ -481,14 +621,14 @@ async def generate_report_chatgpt(input_file: str = Query(..., description="Inpu
         comparison_file_paths = [uploaded_files[fid]["file_path"] for fid in comparison_file_ids]
         
         # Process the files using existing functions
-        input_property_info, input_price_info, input_features_info = extract_property_info(input_file_path)
+        input_property_info, input_price_info, input_features_info, is_rental = extract_property_info(input_file_path)
         
         # Process all comparison files
         all_comparison_property_info = []
         all_comparison_price_info = []
         all_comparison_features_info = []
         for comp_file_path in comparison_file_paths:
-            comp_property_info, comp_price_info, comp_features_info = extract_property_info(comp_file_path)
+            comp_property_info, comp_price_info, comp_features_info, is_rental = extract_property_info(comp_file_path)
             if comp_property_info and comp_price_info:
                 all_comparison_property_info.extend(comp_property_info)
                 all_comparison_price_info.extend(comp_price_info)
@@ -533,14 +673,14 @@ async def generate_report(input_file: str = Query(..., description="Input file I
         comparison_file_paths = [uploaded_files[fid]["file_path"] for fid in comparison_file_ids]
         
         # Process the files using existing functions
-        input_property_info, input_price_info, input_features_info = extract_property_info(input_file_path)
+        input_property_info, input_price_info, input_features_info, is_rental = extract_property_info(input_file_path)
         
         # Process all comparison files
         all_comparison_property_info = []
         all_comparison_price_info = []
         all_comparison_features_info = []
         for comp_file_path in comparison_file_paths:
-            comp_property_info, comp_price_info, comp_features_info = extract_property_info(comp_file_path)
+            comp_property_info, comp_price_info, comp_features_info, is_rental = extract_property_info(comp_file_path)
             if comp_property_info and comp_price_info:
                 all_comparison_property_info.extend(comp_property_info)
                 all_comparison_price_info.extend(comp_price_info)
@@ -548,7 +688,7 @@ async def generate_report(input_file: str = Query(..., description="Input file I
         # Combine all data
         all_property_info = input_property_info + all_comparison_property_info if input_property_info and all_comparison_property_info else (input_property_info or all_comparison_property_info or [])
         all_price_info = input_price_info + all_comparison_price_info if input_price_info and all_comparison_price_info else (input_price_info or all_comparison_price_info or [])
-        
+        all_features_info = input_features_info + all_comparison_features_info if input_features_info and all_comparison_features_info else (input_features_info or all_comparison_features_info or [])
         # Generate graphs
         combined_price_analysis = pd.DataFrame(all_price_info)
         generate_graphs(combined_price_analysis)
@@ -559,7 +699,7 @@ async def generate_report(input_file: str = Query(..., description="Input file I
         
         # Generate appraisal report
         input_sq_ft = input_property_info[0]['Living Sq Ft'] if input_property_info else "0"
-        appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft)
+        appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft, is_rental)
         # Styles for PDF report
         styles = getSampleStyleSheet()
         # Generate PDF report in temporary directory
@@ -763,6 +903,7 @@ async def generate_report(input_file: str = Query(..., description="Input file I
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
+# HANDLE MANUAL INPUT
 @app.post("/generate-report-manual")
 async def generate_report_manual(manual_data: ManualInputData, comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
     """Generate property comparison report with manual input data"""
@@ -805,12 +946,13 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
         # Process all comparison files
         all_comparison_property_info = []
         all_comparison_price_info = []
-        
+        all_comparison_features_info = []
         for comp_file_path in comparison_file_paths:
-            comp_property_info, comp_price_info = extract_property_info(comp_file_path)
+            comp_property_info, comp_price_info, comp_features_info, is_rental = extract_property_info(comp_file_path)
             if comp_property_info and comp_price_info:
                 all_comparison_property_info.extend(comp_property_info)
                 all_comparison_price_info.extend(comp_price_info)
+                all_comparison_features_info.extend(comp_features_info)
         
         # Combine all data
         all_property_info = input_property_info + all_comparison_property_info if input_property_info and all_comparison_property_info else (input_property_info or all_comparison_property_info or [])
@@ -826,7 +968,7 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
         
         # Generate appraisal report
         input_sq_ft = input_property_info[0]['Living Sq Ft'] if input_property_info else "0"
-        appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft)
+        appraisal_report = generate_appraisal_report(input_price_info, all_comparison_price_info, input_sq_ft, is_rental)
         
         # Styles for PDF report
         styles = getSampleStyleSheet()
