@@ -67,13 +67,15 @@ class ApiService {
   }
 
   // Upload single input PDF
-  async uploadInputPdf(file: File): Promise<UploadResponse> {
+  async uploadInputPdf(file: File, token: string): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append("file", file);
-
     const response = await fetch(`${this.baseUrl}/upload-input-pdf`, {
       method: "POST",
       body: formData,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     if (!response.ok) {
@@ -85,7 +87,10 @@ class ApiService {
   }
 
   // Upload multiple comparison PDFs
-  async uploadComparisonPdfs(files: File[]): Promise<UploadResponse> {
+  async uploadComparisonPdfs(
+    files: File[],
+    token: string
+  ): Promise<UploadResponse> {
     const formData = new FormData();
     files.forEach((file) => {
       formData.append("files", file);
@@ -94,6 +99,9 @@ class ApiService {
     const response = await fetch(`${this.baseUrl}/upload-comparison-pdf`, {
       method: "POST",
       body: formData,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     if (!response.ok) {
@@ -106,11 +114,15 @@ class ApiService {
 
   async generateChatgptPrompt(
     inputFileId: string,
-    comparisonFileIds: string[]
+    comparisonFileIds: string[],
+    token: string
   ): Promise<GeneratePromptResponse> {
     const url = `${this.baseUrl}/generate-report-chatgpt?input_file=${inputFileId}&comparison_files=${comparisonFileIds.join(",")}`;
     const response = await fetch(url, {
       method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
     if (!response.ok) {
       const errorData = await response.json();
@@ -121,7 +133,8 @@ class ApiService {
 
   async generateChatgptPromptManual(
     manualData: ManualInputData,
-    comparisonFileIds: string[]
+    comparisonFileIds: string[],
+    token: string
   ): Promise<GeneratePromptResponse> {
     const comparisonFilesParam = comparisonFileIds.join(",");
     const url = `${this.baseUrl}/generate-chatgpt-prompt-manual?comparison_files=${comparisonFilesParam}`;
@@ -130,6 +143,7 @@ class ApiService {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(manualData),
     });
@@ -145,13 +159,17 @@ class ApiService {
   // Generate report with file input
   async generateReport(
     inputFileId: string,
-    comparisonFileIds: string[]
+    comparisonFileIds: string[],
+    token: string
   ): Promise<GenerateReportResponse> {
     const comparisonFilesParam = comparisonFileIds.join(",");
     const url = `${this.baseUrl}/generate-report?input_file=${inputFileId}&comparison_files=${comparisonFilesParam}`;
 
     const response = await fetch(url, {
       method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     if (!response.ok) {
@@ -165,7 +183,8 @@ class ApiService {
   // Generate report with manual input
   async generateReportWithManualInput(
     manualData: ManualInputData,
-    comparisonFileIds: string[]
+    comparisonFileIds: string[],
+    token: string
   ): Promise<GenerateReportResponse> {
     const comparisonFilesParam = comparisonFileIds.join(",");
     const url = `${this.baseUrl}/generate-report-manual?comparison_files=${comparisonFilesParam}`;
@@ -174,6 +193,7 @@ class ApiService {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(manualData),
     });
@@ -186,11 +206,14 @@ class ApiService {
     return response.json();
   }
   // Download report
-  async downloadReport(reportId: string): Promise<Blob> {
+  async downloadReport(reportId: string, token: string): Promise<Blob> {
     const response = await fetch(
       `${this.baseUrl}/download-report/${reportId}`,
       {
         method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       }
     );
 
@@ -203,14 +226,17 @@ class ApiService {
   }
 
   // Get report view URL for embedding
-  getReportViewUrl(reportId: string): string {
-    return `${this.baseUrl}/view-report/${reportId}`;
+  getReportViewUrl(reportId: string, token: string): string {
+    return `${this.baseUrl}/view-report/${reportId}?token=${token}`;
   }
 
   // List uploaded files (for debugging)
-  async listFiles(): Promise<any> {
+  async listFiles(token: string): Promise<any> {
     const response = await fetch(`${this.baseUrl}/files`, {
       method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     if (!response.ok) {
@@ -222,9 +248,12 @@ class ApiService {
   }
 
   // Delete uploaded file
-  async deleteFile(fileId: string): Promise<any> {
+  async deleteFile(fileId: string, token: string): Promise<any> {
     const response = await fetch(`${this.baseUrl}/files/${fileId}`, {
       method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     if (!response.ok) {

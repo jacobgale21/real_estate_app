@@ -13,7 +13,7 @@ from reportlab.platypus import Image, PageBreak
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uuid
@@ -22,9 +22,10 @@ from typing import List, Dict, Any
 import json
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
+from middleware import verify_token, verify_token_query
 
 
-def extract_property_info(file_path):
+def extract_property_info(file_path, token: str = Depends(verify_token)):
     """
     Extract property information from PDF text.
     Each MLS report contains the same phrases for basic property information, so use regex statements to extract basic information.
@@ -315,7 +316,6 @@ def extract_property_info(file_path):
                             
                             features_info['Public Remarks'] = remarks_text.strip()
                     price_info['List $/Sq Ft (Living)'] = pd.to_numeric(price_info['List Price'].replace('$', '').replace(',', ''), errors='coerce') / pd.to_numeric(property_info['Living Sq Ft'].replace(',', ''), errors='coerce')
-                    print("price_info['List $/Sq Ft (Living)']", price_info['List $/Sq Ft (Living)'])
                     property_result.append(property_info)
                     features_result.append(features_info)
                     price_result.append(price_info)
@@ -324,7 +324,7 @@ def extract_property_info(file_path):
     except Exception as e:
         print(f"Error reading PDF file {file_path}: {e}")
         return None
-def generate_chatgpt_prompt(property_info, price_info, features_info):
+def generate_chatgpt_prompt(property_info, price_info, features_info, token: str = Depends(verify_token)):
     prompt = f"""
     You are a professional real estate market analyst specializing in MLS-based comparative market reports. 
     Your job is to create a detailed, appraisal-style markdown report comparing a subject property against multiple comparable sales. 
@@ -355,7 +355,6 @@ def generate_graphs(combined_df_price, is_rental):
     if is_rental:
         try:
             df_clean = combined_df_price.copy()
-            print("df_clean", df_clean)
             # Convert price columns to numeric, removing $ and commas
             for col in ['List Price']:
                 df_clean[col] = pd.to_numeric(df_clean[col].str.replace('$', '').str.replace(',', ''), errors='coerce')
@@ -364,8 +363,6 @@ def generate_graphs(combined_df_price, is_rental):
             
             # Remove rows where both values are None/NaN
             df_clean = df_clean.dropna(subset=['List Price'])
-
-            print("df_clean", df_clean)
             # Filter for properties with both list and sold prices
             valid_data = df_clean.dropna(subset=['List Price'])
 
@@ -493,8 +490,6 @@ def cleanup_temp_files():
         
         # Clear uploaded files dictionary
         uploaded_files.clear()
-        
-        print("Temporary files cleaned up successfully")
     except Exception as e:
         print(f"Error cleaning up temporary files: {e}")
 
@@ -543,8 +538,6 @@ def generate_appraisal_report(combined_df_price, input_sq_ft, is_rental):
         return
 
 def combine_to_dataframe(comparison_file_ids, manual_data = None, input_file: str = Query(..., description="Input file ID")):
-    print("Manual data", manual_data)
-    
     
     if manual_data is not None:
         try:
@@ -640,7 +633,6 @@ uploaded_files = {}
 
 # Create temporary directory for processing
 temp_dir = tempfile.mkdtemp(prefix="real_estate_")
-print(f"Temporary directory created: {temp_dir}")
 
 # Create reports directory for final outputs only
 reports_dir = "reports"
@@ -676,7 +668,7 @@ async def root():
     return {"message": "Real Estate PDF Analysis API is running!"}
 
 @app.post("/upload-input-pdf")
-async def upload_input_pdf(file: UploadFile = File(...)):
+async def upload_input_pdf(file: UploadFile = File(...), token: str = Depends(verify_token)):
     """Upload the main MLS report PDF"""
     try:
         # Validate file type
@@ -711,7 +703,7 @@ async def upload_input_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @app.post("/upload-comparison-pdf")
-async def upload_comparison_pdf(files: List[UploadFile] = File(...)):
+async def upload_comparison_pdf(files: List[UploadFile] = File(...), token: str = Depends(verify_token)):
     """Upload comparison property PDFs"""
     try:
         uploaded_file_info = []
@@ -753,7 +745,7 @@ async def upload_comparison_pdf(files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 @app.get("/generate-report-chatgpt")
 async def generate_report_chatgpt(input_file: str = Query(..., description="Input file ID"), 
-                            comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
+                            comparison_files: str = Query(..., description="Comma-separated comparison file IDs"), token: str = Depends(verify_token)):
     """Generate property comparison report"""
     try:
         # Validate input file exists
@@ -780,7 +772,7 @@ async def generate_report_chatgpt(input_file: str = Query(..., description="Inpu
 
 @app.get("/generate-report")
 async def generate_report(input_file: str = Query(..., description="Input file ID"), 
-                            comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
+                            comparison_files: str = Query(..., description="Comma-separated comparison file IDs"), token: str = Depends(verify_token)):
     """Generate property comparison report"""
     try:
         # Validate input file exists
@@ -1022,7 +1014,7 @@ async def generate_report(input_file: str = Query(..., description="Input file I
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 @app.post("/generate-chatgpt-prompt-manual")
-async def generate_chatgpt_prompt_manual(manual_data: ManualInputData, comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
+async def generate_chatgpt_prompt_manual(manual_data: ManualInputData, comparison_files: str = Query(..., description="Comma-separated comparison file IDs"), token: str = Depends(verify_token)):
     try:
         # Parse comparison file IDs
         comparison_file_ids = [fid.strip() for fid in comparison_files.split(",")]
@@ -1040,7 +1032,7 @@ async def generate_chatgpt_prompt_manual(manual_data: ManualInputData, compariso
 
 # HANDLE MANUAL INPUT
 @app.post("/generate-report-manual")
-async def generate_report_manual(manual_data: ManualInputData, comparison_files: str = Query(..., description="Comma-separated comparison file IDs")):
+async def generate_report_manual(manual_data: ManualInputData, comparison_files: str = Query(..., description="Comma-separated comparison file IDs"), token: str = Depends(verify_token)):
     """Generate property comparison report with manual input data"""
     try:
         # Parse comparison file IDs
@@ -1263,7 +1255,7 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 @app.get("/download-report/{report_id}")
-async def download_report(report_id: str):
+async def download_report(report_id: str, token: str = Depends(verify_token)):
     """Download the generated PDF report"""
     try:
         report_path = os.path.join("reports", f"{report_id}.pdf")
@@ -1281,11 +1273,10 @@ async def download_report(report_id: str):
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 @app.get("/view-report/{report_id}")
-async def view_report(report_id: str):
+async def view_report(report_id: str, token: str = Depends(verify_token_query)):
     """View the generated PDF report in browser"""
     try:
         report_path = os.path.join("reports", f"{report_id}.pdf")
-        
         if not os.path.exists(report_path):
             raise HTTPException(status_code=404, detail="Report not found")
         
@@ -1299,14 +1290,14 @@ async def view_report(report_id: str):
         raise HTTPException(status_code=500, detail=f"View failed: {str(e)}")
 
 @app.get("/files")
-async def list_uploaded_files():
+async def list_uploaded_files(token: str = Depends(verify_token)):
     """List all uploaded files (for debugging)"""
     return {
         "uploaded_files": uploaded_files
     }
 
 @app.delete("/files/{file_id}")
-async def delete_file(file_id: str):
+async def delete_file(file_id: str, token: str = Depends(verify_token)):
     """Delete an uploaded file"""
     try:
         if file_id not in uploaded_files:
@@ -1330,7 +1321,6 @@ def cleanup_on_shutdown():
     try:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-            print(f"Temporary directory {temp_dir} cleaned up on shutdown")
     except Exception as e:
         print(f"Error cleaning up temporary directory: {e}")
 

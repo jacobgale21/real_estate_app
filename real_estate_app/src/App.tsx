@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiService } from "./api";
 import type { GenerateReportResponse, ManualInputData } from "./api";
 import {
@@ -9,7 +9,7 @@ import {
   Text,
 } from "@aws-amplify/ui-react";
 import { Amplify } from "aws-amplify";
-import { signOut } from "aws-amplify/auth";
+import { fetchAuthSession, signOut } from "aws-amplify/auth";
 import awsExports from "./aws-exports";
 import "@aws-amplify/ui-react/styles.css";
 import "./authenticator.css";
@@ -39,6 +39,7 @@ function App() {
   const [chatgptPrompt, setChatgptPrompt] = useState<string | null>(null);
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [showPromptSection, setShowPromptSection] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
   const [manualInputData, setManualInputData] = useState({
     address: "",
     status: "Active",
@@ -61,6 +62,25 @@ function App() {
     exterior: "",
     publicRemarks: "",
   });
+  useEffect(() => {
+    const getToken = async () => {
+      try {
+        const session = await fetchAuthSession();
+        if (session.tokens) {
+          return session.tokens.accessToken?.toString();
+        } else {
+          console.log("No tokens available");
+        }
+      } catch (error) {
+        console.error("Error getting tokens:", error);
+      }
+    };
+    getToken().then((tempToken) => {
+      if (tempToken) {
+        setToken(tempToken);
+      }
+    });
+  }, []);
   const handleMlsReportUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -76,7 +96,7 @@ function App() {
     setError(null);
 
     try {
-      const response = await apiService.uploadInputPdf(file);
+      const response = await apiService.uploadInputPdf(file, token!);
 
       if (response.success) {
         setMlsReport({
@@ -115,7 +135,7 @@ function App() {
     setError(null);
 
     try {
-      const response = await apiService.uploadComparisonPdfs(pdfFiles);
+      const response = await apiService.uploadComparisonPdfs(pdfFiles, token!);
 
       if (response.success && response.uploaded_files) {
         const uploadedFiles = response.uploaded_files.map((apiFile, index) => ({
@@ -188,13 +208,15 @@ function App() {
       if (hasInputMLS) {
         response = await apiService.generateChatgptPrompt(
           mlsReport!.file_id!,
-          comparisonFileIds
+          comparisonFileIds,
+          token!
         );
       } else {
         // Generate prompt with manual input data
         response = await apiService.generateChatgptPromptManual(
           manualInputData as ManualInputData,
-          comparisonFileIds
+          comparisonFileIds,
+          token!
         );
       }
 
@@ -254,13 +276,15 @@ function App() {
       if (hasInputMLS) {
         response = await apiService.generateReport(
           mlsReport!.file_id!,
-          comparisonFileIds
+          comparisonFileIds,
+          token!
         );
       } else {
         // Generate report with manual input data
         response = await apiService.generateReportWithManualInput(
           manualInputData as ManualInputData,
-          comparisonFileIds
+          comparisonFileIds,
+          token!
         );
       }
 
@@ -291,7 +315,10 @@ function App() {
     if (!reportData?.report_id) return;
 
     try {
-      const blob = await apiService.downloadReport(reportData.report_id);
+      const blob = await apiService.downloadReport(
+        reportData.report_id,
+        token!
+      );
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1321,7 +1348,7 @@ function App() {
             {/* PDF Viewer */}
             <div className="flex-1 p-4">
               <iframe
-                src={apiService.getReportViewUrl(reportData.report_id)}
+                src={apiService.getReportViewUrl(reportData.report_id, token!)}
                 className="w-full h-full border-0 rounded-lg"
                 title="Property Analysis Report"
               />
