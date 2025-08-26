@@ -10,6 +10,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, ListFlowable, ListItem
 import matplotlib.pyplot as plt
 from reportlab.platypus import Image, PageBreak
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -24,8 +25,17 @@ import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from middleware import verify_token, verify_token_query
 
+def extract_property_type(file_path):
+    with open(file_path, 'rb') as file:
+        pdf_reader = PyPDF2.PdfReader(file)
+        for page_num, page in enumerate(pdf_reader.pages):
+            text = page.extract_text()
+            if 'residential customer report' in text.lower():
+                return "Residential"
+            else:
+                return "Rental"
 
-def extract_property_info(file_path, token: str = Depends(verify_token)):
+def extract_property_info(file_path):
     """
     Extract property information from PDF text.
     Each MLS report contains the same phrases for basic property information, so use regex statements to extract basic information.
@@ -627,10 +637,9 @@ allow_credentials=True,
 allow_methods=["*"],
 allow_headers=["*"],
 )
-
+input_file_path = ""
 # Global storage for uploaded files (in production, use a database)
 uploaded_files = {}
-
 # Create temporary directory for processing
 temp_dir = tempfile.mkdtemp(prefix="real_estate_")
 
@@ -671,6 +680,7 @@ async def root():
 async def upload_input_pdf(file: UploadFile = File(...), token: str = Depends(verify_token)):
     """Upload the main MLS report PDF"""
     try:
+
         # Validate file type
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="Only PDF files are allowed")
@@ -680,9 +690,10 @@ async def upload_input_pdf(file: UploadFile = File(...), token: str = Depends(ve
         
         # Save file to temporary directory
         file_path = os.path.join(temp_dir, f"{file_id}.pdf")
+        global input_file_path
+        input_file_path = file_path
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
         # Store file info
         uploaded_files[file_id] = {
             "filename": file.filename,
@@ -707,7 +718,6 @@ async def upload_comparison_pdf(files: List[UploadFile] = File(...), token: str 
     """Upload comparison property PDFs"""
     try:
         uploaded_file_info = []
-        
         for file in files:
             # Validate file type
             if not file.filename.lower().endswith('.pdf'):
@@ -720,6 +730,7 @@ async def upload_comparison_pdf(files: List[UploadFile] = File(...), token: str 
             file_path = os.path.join(temp_dir, f"{file_id}.pdf")
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
+            temp_property_type = extract_property_type(file_path)
             
             # Store file info
             uploaded_files[file_id] = {
@@ -734,9 +745,42 @@ async def upload_comparison_pdf(files: List[UploadFile] = File(...), token: str 
                 "filename": file.filename,
                 "file_size": uploaded_files[file_id]["file_size"]
             })
-        
+            global input_file_path
+            current_property_type = extract_property_type(input_file_path)
+            if temp_property_type != current_property_type:
+                try:
+                    print("Type mismatch")
+                    # Call comparison function to auto fill the data
+                    # Think of best way to optimize this as the information is already extracted from the file, save locally it does not have to be run again
+                    property_info, price_info, features_info, is_rental = extract_property_info(input_file_path)
+                    
+                    extracted_data = {}
+                    
+                    if property_info and len(property_info) > 0:
+                        for key, value in property_info[0].items():
+                            key = key.replace(" ", "")
+                            key  = key.lower()
+                            if value is not None:
+                                extracted_data[key] = value
+                    if features_info and len(features_info) > 0:
+                        for key, value in features_info[0].items():
+                            key = key.replace(" ", "")
+                            key  = key.lower()
+                            if value is not None:
+                                extracted_data[key] = value
+                    return {
+                        "success": True,
+                        "type_mismatch": True,
+                        "message": "Type mismatch, auto filled data",
+                        "uploaded_files": uploaded_file_info,
+                        "extracted_data": extracted_data   
+                    }
+                except Exception as e:
+                    print(f"Error in type mismatch: {e}")
+            
         return {
             "success": True,
+            "type_mismatch": False,
             "message": f"{len(uploaded_file_info)} comparison PDF(s) uploaded successfully",
             "uploaded_files": uploaded_file_info
         }
@@ -792,9 +836,9 @@ async def generate_report(input_file: str = Query(..., description="Input file I
         appraisal_report = generate_appraisal_report(all_price_info, input_sq_ft, is_rental)
 
         # Create DataFrames
-        combined_df = all_property_info.set_index('Address').T 
-        combined_df_price = all_price_info.set_index('Address').T 
-        combined_df_features = all_features_info.set_index('Address').T
+        combined_df = all_property_info
+        combined_df_price = all_price_info 
+        combined_df_features = all_features_info
 
         # Here generate prompt for chatgpt and prompt chatgpt api to give response
         # Break down the features to chatgpt5 and everything else to chatgpt4o-mini to minimize costs
@@ -824,14 +868,37 @@ async def generate_report(input_file: str = Query(..., description="Input file I
             leading=12,
         )
         # Prepare data for PDF tables
-        property_data = [['Feature'] + list(combined_df.columns)]
+        property_data = [list(combined_df.columns)]
         for index, row in combined_df.iterrows():
-            property_data.append([index] + [str(cell) if pd.notna(cell) else '' for cell in row])
+            property_data.append([str(cell) if pd.notna(cell) else '' for cell in row])
         
-        price_data = [['Metric'] + list(combined_df_price.columns)]
+        price_data = [list(combined_df_price.columns)]
         for index, row in combined_df_price.iterrows():
-            price_data.append([index] + [str(cell) if pd.notna(cell) else '' for cell in row])
+            price_data.append([str(cell) if pd.notna(cell) else '' for cell in row])
         
+        # Compute column widths from header text, fit to available width
+        def _calc_col_widths(headers, font_name, font_size, available_width):
+            padding = 12  # horizontal padding per cell (left+right)
+            min_w = 0.6 * inch
+            max_w = 2.2 * inch
+            raw_widths = []
+            for h in headers:
+                text = str(h)
+                w = stringWidth(text, font_name, font_size) + 2 * padding
+                w = max(min_w, min(max_w, w))
+                raw_widths.append(w)
+            total = sum(raw_widths) or 1.0
+            if total > available_width:
+                scale = available_width / total
+                raw_widths = [max(min_w, w * scale) for w in raw_widths]
+            return raw_widths
+
+        header_font = getattr(cell_heading_style, 'fontName', 'Times-Bold')
+        header_size = getattr(cell_heading_style, 'fontSize', 12)
+        available_width = doc.width
+        property_col_widths = _calc_col_widths(property_data[0], header_font, header_size, available_width)
+        price_col_widths = _calc_col_widths(price_data[0], header_font, header_size, available_width)
+
         # Wrap all cell content in Paragraph objects for word wrapping
         for i, row in enumerate(property_data):
             for j, cell in enumerate(row):
@@ -848,8 +915,8 @@ async def generate_report(input_file: str = Query(..., description="Input file I
                     price_data[i][j] = Paragraph(str(cell), cell_style)
         
                  # Create tables
-        property_table = Table(property_data, colWidths=[0.8*inch] + [1.3*inch] * (len(property_data[0]) - 1))
-        price_table = Table(price_data, colWidths=[0.8*inch] + [1.3*inch] * (len(price_data[0]) - 1))
+        property_table = Table(property_data, colWidths=property_col_widths)
+        price_table = Table(price_data, colWidths=price_col_widths)
         
                  # Apply table styles
         property_table.setStyle(TableStyle([
@@ -902,16 +969,7 @@ async def generate_report(input_file: str = Query(..., description="Input file I
             spaceAfter=12,
             spaceBefore=12
         )
-        paragraph_style = ParagraphStyle(
-            name='Paragraph',
-            parent=styles['BodyText'],
-            fontName='Times-Roman',
-            fontSize=12,
-            leading=12,
-            spaceAfter=0,
-        )
         
-
         # Build PDF story
         story = [
             Paragraph("Property Comparison Analysis", title_style),
@@ -1044,9 +1102,9 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
         generate_graphs(all_price_info, manual_data.isRental)
         
         # Create DataFrames
-        combined_df = all_property_info.set_index('Address').T
-        combined_df_price = all_price_info.set_index('Address').T
-        combined_df_features = all_features_info.set_index('Address').T 
+        combined_df = all_property_info
+        combined_df_price = all_price_info
+        combined_df_features = all_features_info    
         # Generate appraisal report - use the manual input rental status
         input_sq_ft = all_property_info['Living Sq Ft'].iloc[0]
         appraisal_report = generate_appraisal_report(all_price_info, input_sq_ft, manual_data.isRental)
@@ -1075,15 +1133,37 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
             fontSize=12,
             leading=12,
         )
-        # Prepare data for PDF tables
-        property_data = [['Feature'] + list(combined_df.columns)]
+        property_data = [list(combined_df.columns)]
         for index, row in combined_df.iterrows():
-            property_data.append([index] + [str(cell) if pd.notna(cell) else '' for cell in row])
+            property_data.append([str(cell) if pd.notna(cell) else '' for cell in row])
         
-        price_data = [['Metric'] + list(combined_df_price.columns)]
+        price_data = [list(combined_df_price.columns)]
         for index, row in combined_df_price.iterrows():
-            price_data.append([index] + [str(cell) if pd.notna(cell) else '' for cell in row])
+            price_data.append([str(cell) if pd.notna(cell) else '' for cell in row])
         
+        # Compute column widths from header text, fit to available width
+        def _calc_col_widths(headers, font_name, font_size, available_width):
+            padding = 12  # horizontal padding per cell (left+right)
+            min_w = 0.6 * inch
+            max_w = 2.2 * inch
+            raw_widths = []
+            for h in headers:
+                text = str(h)
+                w = stringWidth(text, font_name, font_size) + 2 * padding
+                w = max(min_w, min(max_w, w))
+                raw_widths.append(w)
+            total = sum(raw_widths) or 1.0
+            if total > available_width:
+                scale = available_width / total
+                raw_widths = [max(min_w, w * scale) for w in raw_widths]
+            return raw_widths
+
+        header_font = getattr(cell_heading_style, 'fontName', 'Times-Bold')
+        header_size = getattr(cell_heading_style, 'fontSize', 12)
+        available_width = doc.width
+        property_col_widths = _calc_col_widths(property_data[0], header_font, header_size, available_width)
+        price_col_widths = _calc_col_widths(price_data[0], header_font, header_size, available_width)
+
         # Wrap all cell content in Paragraph objects for word wrapping
         for i, row in enumerate(property_data):
             for j, cell in enumerate(row):
@@ -1099,10 +1179,9 @@ async def generate_report_manual(manual_data: ManualInputData, comparison_files:
                 else:
                     price_data[i][j] = Paragraph(str(cell), cell_style)
         
-        # Create tables
-        property_table = Table(property_data, colWidths=[0.8*inch] + [1.3*inch] * (len(property_data[0]) - 1))
-        price_table = Table(price_data, colWidths=[0.8*inch] + [1.3*inch] * (len(price_data[0]) - 1))
-        
+                 # Create tables
+        property_table = Table(property_data, colWidths=property_col_widths)
+        price_table = Table(price_data, colWidths=price_col_widths)
         # Apply table styles
         property_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),

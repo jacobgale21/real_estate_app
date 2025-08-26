@@ -137,7 +137,11 @@ function App() {
     try {
       const response = await apiService.uploadComparisonPdfs(pdfFiles, token!);
 
-      if (response.success && response.uploaded_files) {
+      if (
+        response.success &&
+        response.uploaded_files &&
+        !response.type_mismatch
+      ) {
         const uploadedFiles = response.uploaded_files.map((apiFile, index) => ({
           name: pdfFiles[index].name,
           size: pdfFiles[index].size,
@@ -149,8 +153,35 @@ function App() {
         setSuccess(
           `${uploadedFiles.length} comparison file(s) uploaded successfully!`
         );
-      } else {
-        setError(response.message || "Upload failed");
+      } else if (response.success && response.type_mismatch) {
+        const uploadedFiles = response.uploaded_files?.map(
+          (apiFile, index) => ({
+            name: pdfFiles[index].name,
+            size: pdfFiles[index].size,
+            type: pdfFiles[index].type,
+            file_id: apiFile.file_id,
+          })
+        );
+
+        setComparisonFiles(uploadedFiles || []);
+        setSuccess(
+          `${uploadedFiles?.length} comparison file(s) uploaded successfully!`
+        );
+        if (response.extracted_data) {
+          setManualInputData((prev) => {
+            const updates: Partial<typeof prev> = {};
+            (Object.keys(prev) as Array<keyof typeof prev>).forEach((k) => {
+              let v = (response.extracted_data as any)[k.toLowerCase()];
+              if (k == "bathrooms") {
+                v = (response.extracted_data as any)["bathrooms(full)"];
+              }
+              if (v !== undefined) updates[k] = v;
+            });
+            return { ...prev, ...updates };
+          });
+        }
+        setHasInputMLS(false);
+        setShowInputForm(true);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");

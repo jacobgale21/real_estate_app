@@ -13,6 +13,8 @@ export interface UploadResponse {
   filename?: string;
   file_size?: number;
   uploaded_files?: UploadedFile[];
+  type_mismatch?: boolean;
+  extracted_data?: Record<string, any>;
 }
 
 export interface ReportData {
