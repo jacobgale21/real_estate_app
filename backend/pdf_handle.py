@@ -24,6 +24,7 @@ import json
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from middleware import verify_token, verify_token_query
+from llm_api import generate_chatgpt_prompt_mini, generate_chatgpt_prompt_features, get_feature_list
 
 def extract_property_type(file_path):
     with open(file_path, 'rb') as file:
@@ -95,19 +96,14 @@ def extract_property_info(file_path):
 
                     lines = text.split('\n')
                     
-                    # Extract address (look for patterns like "1310 Lamarville Dr" or "1163 N Prescott Dr")
-                    address_patterns = [
-                        r'\d+\s+[A-Za-z\s]+(?:Dr|Ave|St|Blvd|Ln|Way|Ct|Pl)',
-                        r'\d+\s+[A-Za-z\s]+(?:Drive|Avenue|Street|Boulevard|Lane|Way|Court|Place)'
-                    ]
                     # Iterate through each line of the text and extract the property and price information through regex statements
                     for line in lines:
-                        for pattern in address_patterns:
-                            address_match = re.search(pattern, line, re.IGNORECASE)
-                            if address_match and not property_info['Address']:
-                                property_info['Address'] = address_match.group().strip()
-                                price_info['Address'] = address_match.group().strip()
-                                features_info['Address'] = address_match.group().strip()
+                        if 'residential customer report' in line.lower():
+                            address_match = re.search(r"report\s*(.*?)\s*(?:,|$)", line, re.IGNORECASE)
+                            if address_match:
+                                price_info['Address'] = address_match.group(1).strip()
+                                property_info['Address'] = address_match.group(1).strip()
+                                features_info['Address'] = address_match.group(1).strip()
                         if 'subdivision:' in line.lower():
                             subdivision_match = re.search(r'subdivision:\s*(.+)', line, re.IGNORECASE)
                             if subdivision_match:
@@ -238,18 +234,8 @@ def extract_property_info(file_path):
 
                     lines = text.split('\n')
                     
-                    # Extract address (look for patterns like "1310 Lamarville Dr" or "1163 N Prescott Dr")
-                    address_patterns = [
-                        r'\d+\s+[A-Za-z\s]+(?:Dr|Ave|St|Blvd|Ln|Way|Ct|Pl)',
-                        r'\d+\s+[A-Za-z\s]+(?:Drive|Avenue|Street|Boulevard|Lane|Way|Court|Place)'
-                    ]
                     # Iterate through each line of the text and extract the property and price information through regex statements
                     for line in lines:
-                        for pattern in address_patterns:
-                            address_match = re.search(pattern, line, re.IGNORECASE)
-                            if address_match and not property_info['Address']:
-                                property_info['Address'] = address_match.group().strip()
-                                price_info['Address'] = address_match.group().strip()   
                         if 'subdivision:' in line.lower():
                             subdivision_match = re.search(r'subdivision:\s*(.+)\s+front exposure', line, re.IGNORECASE)
                             if subdivision_match:
@@ -291,6 +277,11 @@ def extract_property_info(file_path):
                             if status_match:
                                 property_info['Status'] = status_match.group(1).strip()
                         elif 'rental price' in line.lower():
+                            address_match = re.search(r"report\s*(.*?)\s*(?:,|$)", line, re.IGNORECASE)
+                            if address_match:
+                                price_info['Address'] = address_match.group(1).strip()
+                                property_info['Address'] = address_match.group(1).strip()
+                                features_info['Address'] = address_match.group(1).strip()
                             sold_price_match = re.search(r"rental price:\s*(.+)", line, re.IGNORECASE)
                             if sold_price_match:
                                 price_info['List Price'] = sold_price_match.group(1).strip()
@@ -334,7 +325,8 @@ def extract_property_info(file_path):
     except Exception as e:
         print(f"Error reading PDF file {file_path}: {e}")
         return None
-def generate_chatgpt_prompt(property_info, price_info, features_info, token: str = Depends(verify_token)):
+
+def generate_chatgpt_prompt(property_info, price_info, features_info):
     prompt = f"""
     You are a professional real estate market analyst specializing in MLS-based comparative market reports. 
     Your job is to create a detailed, appraisal-style markdown report comparing a subject property against multiple comparable sales. 
@@ -358,6 +350,7 @@ def generate_chatgpt_prompt(property_info, price_info, features_info, token: str
         prompt += "\n\n"
     prompt += f"Please produce the full appraisal-style comparison for the subject property: {property_info['Address'].iloc[0]} versus the other {len(property_info) - 1} properties. Follow the section structure exactly."
     return prompt
+
 
 
 def generate_graphs(combined_df_price, is_rental):
