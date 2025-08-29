@@ -7,6 +7,7 @@ from schemas.file_storage_service import FileStorageService
 from fastapi.middleware.cors import CORSMiddleware
 from middleware import verify_token, verify_token_query
 from services.report_service import generate_graphs, generate_appraisal_report, generate_chatgpt_prompt, combine_to_dataframe
+from services.llm_service import generate_chatgpt_prompt_features, get_feature_list, generate_chatgpt_prompt_mini
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.platypus import Image, PageBreak
