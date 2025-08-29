@@ -351,8 +351,6 @@ def generate_chatgpt_prompt(property_info, price_info, features_info):
     prompt += f"Please produce the full appraisal-style comparison for the subject property: {property_info['Address'].iloc[0]} versus the other {len(property_info) - 1} properties. Follow the section structure exactly."
     return prompt
 
-
-
 def generate_graphs(combined_df_price, is_rental):
     # Clean data by removing None values and converting to numeric
     if is_rental:
@@ -1396,7 +1394,6 @@ def cleanup_on_shutdown():
     except Exception as e:
         print(f"Error cleaning up temporary directory: {e}")
 
-# %%
 if __name__ == "__main__":
     try:
         uvicorn.run(app, host="0.0.0.0", port=8000)

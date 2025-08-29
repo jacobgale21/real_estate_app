@@ -1,0 +1,22 @@
+from pydantic import BaseModel
+class ManualInputData(BaseModel):
+    address: str
+    status: str
+    subdivision: str
+    yearBuilt: str
+    livingSqFt: str
+    totalSqFt: str
+    bedrooms: str
+    bathrooms: str
+    stories: str
+    garageSpaces: str
+    privatePool: str
+    listPrice: str
+    listPricePerSqFt: str
+    soldPrice: str
+    soldPricePerSqFt: str
+    daysOnMarket: str
+    isRental: bool
+    interior: str
+    exterior: str
+    publicRemarks: str
